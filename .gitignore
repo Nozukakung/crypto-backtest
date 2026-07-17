@@ -1,0 +1,30 @@
+# Data files
+data/parquet/
+data/raw/
+*.csv
+*.parquet
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Reports (generated)
+reports/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.key
