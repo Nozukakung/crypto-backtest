@@ -1,7 +1,9 @@
+# CSV files
+csv/
+
 # Data files
 data/parquet/
 data/raw/
-*.csv
 *.parquet
 
 # Python

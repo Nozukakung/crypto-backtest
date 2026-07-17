@@ -1,0 +1,34 @@
+# config/strategy.yaml — พารามิเตอร์กลยุทธ์ทั้งหมด
+strategy:
+  name: "Mean Reversion + DCA"
+  type: "crypto_futures"
+  timeframe: "1m"
+  initial_capital: 10000.0          # ทุนเริ่มต้น (USD)
+  size_per_trade_usd: 100.0         # ขนาดไม้ละ (USD) - FIXED
+  max_positions: 1                # เปิดพร้อมกันได้สูงสุด
+
+signal:
+  rsi_period: 14
+  rsi_long_threshold: 40.0          # RSI < 40 = ไป Long
+  rsi_short_threshold: 60.0         # RSI > 60 = ไป Short
+  max_consecutive_high: 5         # ไม่เปิด Long ถ้ามีแท่งเขียวติดกัน 5
+  avoid_touch_pattern: true       # ไม่เปิดถ้าเจอแพทเทิร์น "แตะ→แตะ→แตะ"
+
+order:
+  type: "limit"
+  price_offset_percent: 0.05      # ห่างจากราคา 0.05% (Maker)
+  fee_rate_maker: 0.02            # Maker fee (%)
+  fee_rate_taker: 0.045           # Taker fee (%)
+  rebalance_interval_minutes: 1   # รีเฟรชทุก 1 นาที
+
+position:
+  take_profit_above_bep_percent: 0.2    # TP = BEP + 0.2%
+  dca_trigger_below_bep_percent: 0.3    # DCA ถ้าต่ำกว่า BEP 0.3%
+  dca_max_cap_usd: 50000.0              # เพดานสูงสุดต่อคู่
+  long_timeout_minutes: 30              # Long ค้าง 30 นาที → รีเฟรช
+  short_timeout_minutes: 120            # Short ค้าง 120 นาที → ออก
+  initial_size_usd: 100.0                 # ขนาดไม้แรก (FIXED)
+
+risk:
+  max_position_per_pair: 10000.0          # เริ่มต้นจำกัด (ปรับได้ในอนาคต)
+  max_drawdown_alert_percent: 30.0        # แจ้งเตือนถ้า DD > 30%
