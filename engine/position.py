@@ -141,7 +141,7 @@ class Position:
         else:
             return self.holding_time_minutes >= self.config.get("short_timeout_minutes", 120)
 
-    def close(self, timestamp: str, price: float, fee_rate: float, reason: Literal["TP", "TIMEOUT_EXIT", "FORCE_EXIT"]):
+    def close(self, timestamp: str, price: float, fee_rate: float, reason: str):
         """ปิดออเดอร์ทั้งหมด"""
         self.status = "CLOSED"
         fee_usd = self.total_size_usd * fee_rate
@@ -149,7 +149,7 @@ class Position:
 
         record = TradeRecord(
             timestamp=timestamp,
-            action=reason,
+            action=reason,  # type: ignore
             price=price,
             size_usd=self.total_size_usd,
             fee_usd=fee_usd,
