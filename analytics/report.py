@@ -1,5 +1,5 @@
 """
-analytics/report.py — HTML Report (Optimized: Sampling + Lightweight Charts)
+analytics/report.py — HTML Report (v2: แก้ไข JSON data injection และ JavaScript double curly braces)
 """
 import pandas as pd
 import numpy as np
@@ -8,151 +8,188 @@ from pathlib import Path
 from datetime import datetime
 
 
-MAX_POINTS = 2000  # จำกัดจุดเพื่อให้ไฟล์เล็กและเครื่องไม่ค้าง (1-2 MB)
+MAX_POINTS = 2000
 
 
 def sample_dataframe(df, max_points=MAX_POINTS):
-    """Downsample dataframe to max_points using uniform sampling"""
     if len(df) <= max_points:
         return df
     step = len(df) // max_points + 1
     return df.iloc[::step].reset_index(drop=True)
 
 
-def create_equity_chart_data(equity_df, symbol):
-    """สร้างข้อมูล chart แบบ JSON สำหรับ Chart.js"""
+def create_equity_chart_data(equity_df):
     df = sample_dataframe(equity_df)
     df = df.copy()
-
-    # คำนวณ drawdown
     equity = df["equity"].values
     peak = np.maximum.accumulate(equity)
     dd = (peak - equity) / peak * 100
-
     return {
         "labels": [str(t)[:16] for t in df["timestamp"]],
-        "equity": [round(float(x), 2) for x in df["equity"]],
+        "equity": [round(float(x), 2) for x in equity],
         "drawdown": [round(float(x), 2) for x in -dd],
     }
 
 
 def create_trade_chart_data(trades_df):
-    """ข้อมูลสำหรับ trade analysis charts"""
     if trades_df.empty:
-        return {"pnl": [], "cum_pnl": [], "hold_time": [], "dca": {}}
+        return {"pnl": [], "cum_pnl": [], "hold_time": [], "dca": {"labels": [], "values": []}}
 
-    # Sample trades if too many
     sampled = trades_df
     if len(trades_df) > MAX_POINTS:
         sampled = trades_df.sample(n=MAX_POINTS, random_state=42)
 
-    # คำนวณ bins สำหรับ PnL Distribution (แบบ histogram ง่ายๆ ด้วย Chart.js bar)
-    # แทนที่จะใช้ histogram complex plugin เราจะจำลองเป็น frequency map
-    pnl_values = sampled["pnl_usd"].values
-    counts, bins = np.histogram(pnl_values, bins=20)
-    pnl_dist = {
-        "labels": [f"{round(bins[i], 1)} to {round(bins[i+1], 1)}" for i in range(len(bins)-1)],
-        "values": [int(x) for x in counts]
-    }
+    pnl = sampled["pnl_usd"].values
+    hold_time = sampled["holding_minutes"].values
+    dca_counts = sampled["dca_count"].values
 
-    # Cumulative PnL (sampled)
-    cum_pnl = sampled["pnl_usd"].cumsum().values
+    dca_hist = {}
+    for d in dca_counts:
+        dca_hist[int(d)] = dca_hist.get(int(d), 0) + 1
+    dca_labels = sorted(dca_hist.keys())
+    dca_values = [dca_hist[k] for k in dca_labels]
 
-    # Holding time
-    ht_counts, ht_bins = np.histogram(sampled["holding_minutes"].values, bins=20)
-    hold_dist = {
-        "labels": [f"{int(ht_bins[i])}-{int(ht_bins[i+1])}m" for i in range(len(ht_bins)-1)],
-        "values": [int(x) for x in ht_counts]
-    }
-
-    # DCA Count
-    dca_counts = trades_df["dca_count"].value_counts().sort_index()
+    cum_pnl = np.cumsum(pnl)
 
     return {
-        "pnl_dist": pnl_dist,
+        "pnl": [round(float(x), 2) for x in pnl],
         "cum_pnl": [round(float(x), 2) for x in cum_pnl],
-        "hold_dist": hold_dist,
-        "dca": {str(k): int(v) for k, v in dca_counts.items()},
+        "hold_time": [int(x) for x in hold_time],
+        "dca": {"labels": [str(x) for x in dca_labels], "values": dca_values},
     }
 
 
-def generate_html_report(symbol, stats, equity_df, trades_df, output_dir="reports"):
-    """สร้างรายงาน HTML แบบ Lightweight (ใช้ Chart.js)"""
+def fmt_money(x):
+    return f"${x:,.2f}"
+
+
+def fmt_pct(x):
+    return f"{x:+.2f}%"
+
+
+def color_class(x):
+    return "positive" if x >= 0 else "negative"
+
+
+def generate_html_report(symbol, stats, equity_df, trades_df, result=None, output_dir="reports"):
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
 
-    equity_data = create_equity_chart_data(equity_df, symbol)
+    # Separate closed vs END_OF_DATA
+    normal_trades = trades_df[trades_df["close_reason"] != "END_OF_DATA"]
+    end_data_trades = trades_df[trades_df["close_reason"] == "END_OF_DATA"]
+
+    normal_count = len(normal_trades)
+    normal_win = int((normal_trades["pnl_usd"] > 0).sum())
+    normal_pnl = float(normal_trades["pnl_usd"].sum()) if normal_count > 0 else 0
+    normal_win_rate = normal_win / normal_count * 100 if normal_count > 0 else 0
+
+    end_count = len(end_data_trades)
+    end_pnl = float(end_data_trades["pnl_usd"].sum()) if end_count > 0 else 0
+
+    equity_data = create_equity_chart_data(equity_df)
     trade_data = create_trade_chart_data(trades_df)
 
-    pnl_class = "positive" if stats.get("total_pnl_usd", 0) >= 0 else "negative"
-    dd_class = "negative" if stats.get("max_drawdown_pct", 0) > 0 else "positive"
+    # Calculate win/loss counts for chart
+    win_count = len([x for x in trade_data["pnl"] if x > 0])
+    loss_count = len([x for x in trade_data["pnl"] if x < 0])
 
-    trade_rows = ""
-    if not trades_df.empty:
-        recent = trades_df.tail(20).iloc[::-1]
-        for _, t in recent.iterrows():
-            pc = "positive" if t["pnl_usd"] >= 0 else "negative"
-            trade_rows += f"""
+    # Prepare trade table data (last 20)
+    display_trades = trades_df.tail(20).iloc[::-1]
+
+    # Build table rows
+    trade_rows = []
+    for _, row in display_trades.iterrows():
+        open_time = str(row["open_time"])[:16]
+        close_time = str(row["close_time"])[:16]
+        side = row["side"]
+        ep = f"${row['ep']:,.2f}"
+        bep = f"${row['bep']:,.2f}"
+        dca = int(row["dca_count"])
+        pnl = row["pnl_usd"]
+        reason = row["close_reason"]
+        pnl_class = "positive" if pnl >= 0 else "negative"
+        pnl_str = fmt_money(pnl)
+        trade_rows.append(f"""
             <tr>
-                <td>{str(t['open_time'])[:16]}</td>
-                <td>{str(t['close_time'])[:16]}</td>
-                <td>{t['side']}</td>
-                <td>${t['ep']:,.2f}</td>
-                <td>${t['bep']:,.2f}</td>
-                <td>{t['dca_count']}</td>
-                <td class="{pc}">${t['pnl_usd']:,.2f}</td>
-                <td>{t['close_reason']}</td>
-            </tr>"""
+                <td>{open_time}</td>
+                <td>{close_time}</td>
+                <td>{side}</td>
+                <td>{ep}</td>
+                <td>{bep}</td>
+                <td>{dca}</td>
+                <td class="{pnl_class}">{pnl_str}</td>
+                <td>{reason}</td>
+            </tr>""")
 
-    # ป้องกัน f-string template issue ด้วยการแยกใส่ JSON ตรงๆ
-    equity_json = json.dumps(equity_data)
-    trade_json = json.dumps(trade_data)
+    trade_table = "".join(trade_rows)
 
-    template = """<!DOCTYPE html>
+    html = f"""<!DOCTYPE html>
 <html lang="th">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Backtest Report — {SYMBOL}</title>
+    <title>Backtest Report — {symbol}</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        h1 { color: #58a6ff; text-align: center; margin: 30px 0; font-size: 2em; }
-        h2 { color: #79c0ff; margin: 20px 0 10px; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
-        .stat-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; text-align: center; }
-        .stat-card .label { color: #8b949e; font-size: 0.9em; }
-        .stat-card .value { color: #f0f6fc; font-size: 1.8em; font-weight: bold; margin: 5px 0; }
-        .stat-card .unit { color: #8b949e; font-size: 0.8em; }
-        .positive { color: #3fb950; } .negative { color: #f85149; }
-        .chart-container { background: #161b22; border-radius: 8px; padding: 20px; margin: 20px 0; height: 350px; }
-        .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        @media (max-width: 900px) { .chart-grid { grid-template-columns: 1fr; } }
-        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-        th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; }
-        th { color: #58a6ff; background: #161b22; }
-        tr:hover { background: #1c2128; }
-        .footer { text-align: center; color: #484f58; margin-top: 40px; padding: 20px; border-top: 1px solid #30363d; }
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }}
+        .container {{ max-width: 1200px; margin: 0 auto; }}
+        h1 {{ color: #58a6ff; text-align: center; margin: 30px 0; font-size: 2em; }}
+        h2 {{ color: #79c0ff; margin: 20px 0 10px; border-bottom: 1px solid #30363d; padding-bottom: 10px; }}
+        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }}
+        .stat-card {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; text-align: center; }}
+        .stat-card .label {{ color: #8b949e; font-size: 0.9em; }}
+        .stat-card .value {{ color: #f0f6fc; font-size: 1.8em; font-weight: bold; margin: 5px 0; }}
+        .stat-card .unit {{ color: #8b949e; font-size: 0.8em; }}
+        .positive {{ color: #3fb950; }} .negative {{ color: #f85149; }}
+        .warning {{ color: #d29922; }}
+        .chart-container {{ background: #161b22; border-radius: 8px; padding: 20px; margin: 20px 0; height: 350px; }}
+        .chart-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+        @media (max-width: 900px) {{ .chart-grid {{ grid-template-columns: 1fr; }} }}
+        table {{ width: 100%; border-collapse: collapse; margin: 10px 0; }}
+        th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #30363d; }}
+        th {{ color: #58a6ff; background: #161b22; }}
+        tr:hover {{ background: #1c2128; }}
+        .footer {{ text-align: center; color: #484f58; margin-top: 40px; padding: 20px; border-top: 1px solid #30363d; }}
+        .info-box {{ background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; margin: 15px 0; }}
+        .info-box.warning {{ border-color: #d29922; background: #2d2400; }}
+        .info-box h3 {{ color: #d29922; margin-bottom: 10px; }}
+        .info-box p {{ color: #c9d1d9; margin: 5px 0; }}
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>📈 Backtest Report — {SYMBOL}</h1>
-    <p style="text-align:center;color:#8b949e;">Mean Reversion + DCA (RSI Signal) | {DATE}</p>
+    <h1>📈 Backtest Report — {symbol}</h1>
+    <p style="text-align:center;color:#8b949e;">Mean Reversion + DCA (RSI Signal) | {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
 
-    <h2>📊 Summary</h2>
-    <div class="stats-grid">
-        <div class="stat-card"><div class="label">Total Trades</div><div class="value">{TOTAL_TRADES}</div><div class="unit">trades</div></div>
-        <div class="stat-card"><div class="label">Win Rate</div><div class="value {WIN_CLASS}">{WIN_RATE}%</div><div class="unit">{WIN_COUNT}W / {LOSS_COUNT}L</div></div>
-        <div class="stat-card"><div class="label">Total PnL</div><div class="value {PNL_CLASS}">${TOTAL_PNL}</div><div class="unit">{TOTAL_PNL_PCT}%</div></div>
-        <div class="stat-card"><div class="label">Final Equity</div><div class="value">${FINAL_EQUITY}</div><div class="unit">USD</div></div>
-        <div class="stat-card"><div class="label">Max Drawdown</div><div class="value {DD_CLASS}">{MAX_DD}%</div><div class="unit">${MAX_DD_USD}</div></div>
-        <div class="stat-card"><div class="label">Total Fees</div><div class="value">${TOTAL_FEES}</div><div class="unit">USD</div></div>
-        <div class="stat-card"><div class="label">Avg Hold Time</div><div class="value">{AVG_HOLD}</div><div class="unit">min</div></div>
-        <div class="stat-card"><div class="label">Avg DCA Count</div><div class="value">{AVG_DCA}</div><div class="unit">max {MAX_DCA}</div></div>
+    <div class="info-box warning">
+        <h3>⚠️ หมายเหตุสำคัญ</h3>
+        <p><strong>Equity Curve = Realized Equity เท่านั้น</strong> (ติดตามเฉพาะ PnL ที่ปิด position แล้ว)</p>
+        <p>Max Drawdown = {stats['max_drawdown_pct']:.2f}% (ตาม realized capital PnL)</p>
+        <p><strong>END_OF_DATA = Position ค้างตอนจบข้อมูล</strong> ยังไม่ได้ปิด TP (ในจริงจะรอต่อจนปิดได้)</p>
     </div>
+
+    <h2>📊 Summary (Closed Positions Only)</h2>
+    <div class="stats-grid">
+        <div class="stat-card"><div class="label">Closed Trades</div><div class="value">{normal_count:,}</div><div class="unit">trades</div></div>
+        <div class="stat-card"><div class="label">Win Rate</div><div class="value positive">{normal_win_rate:.2f}%</div><div class="unit">{normal_win}W / {normal_count - normal_win}L</div></div>
+        <div class="stat-card"><div class="label">Closed PnL</div><div class="value {color_class(normal_pnl)}">{fmt_money(normal_pnl)}</div><div class="unit">{fmt_pct(normal_pnl / stats.get('initial_capital', 10000) * 100)}</div></div>
+        <div class="stat-card"><div class="label">Final Equity</div><div class="value">{fmt_money(stats['final_equity'])}</div><div class="unit">USD</div></div>
+        <div class="stat-card"><div class="label">Max Drawdown</div><div class="value positive">{stats['max_drawdown_pct']:.2f}%</div><div class="unit">${stats['max_drawdown_usd']:,.2f}</div></div>
+        <div class="stat-card"><div class="label">Total Fees</div><div class="value">{fmt_money(stats['total_fees_usd'])}</div><div class="unit">USD</div></div>
+        <div class="stat-card"><div class="label">Avg Hold Time</div><div class="value">{stats['avg_holding_minutes']:.0f}</div><div class="unit">min</div></div>
+        <div class="stat-card"><div class="label">Avg DCA Count</div><div class="value">{stats['avg_dca_count']:.1f}</div><div class="unit">max {stats['max_dca_count']}</div></div>
+    </div>
+
+    {f'''
+    <h2>⚠️ END_OF_DATA Positions (ยังไม่ได้ปิด TP)</h2>
+    <div class="stats-grid">
+        <div class="stat-card"><div class="label">Open Positions</div><div class="value warning">{end_count}</div><div class="unit">positions</div></div>
+        <div class="stat-card"><div class="label">Unrealized PnL</div><div class="value negative">{fmt_money(end_pnl)}</div><div class="unit">{fmt_pct(end_pnl / stats.get('initial_capital', 10000) * 100)}</div></div>
+        <div class="stat-card"><div class="label">Note</div><div class="value warning">รอราคากลับถึง TP</div><div class="unit">In real trading: hold until TP</div></div>
+    </div>
+    ''' if end_count > 0 else ''}
 
     <h2>📈 Equity Curve</h2>
     <div class="chart-grid">
@@ -169,94 +206,150 @@ def generate_html_report(symbol, stats, equity_df, trades_df, output_dir="report
     </div>
 
     <h2>📋 Trade Log (Last 20)</h2>
-    <table><tr><th>Open</th><th>Close</th><th>Side</th><th>EP</th><th>BEP</th><th>DCA</th><th>PnL</th><th>Reason</th></tr>{TRADE_ROWS}</table>
+    <table>
+        <tr><th>Open</th><th>Close</th><th>Side</th><th>EP</th><th>BEP</th><th>DCA</th><th>PnL</th><th>Reason</th></tr>
+        {trade_table}
+    </table>
 
-    <div class="footer"><p>Crypto Backtest System — {DATE}</p></div>
-</div>
+    <div class="footer">
+        <p>Generated by Crypto Backtest Engine v1.0</p>
+        <p>Strategy: Mean Reversion + DCA (RSI Signal, TF 1m)</p>
+    </div>
 
 <script>
-const equityData = %EQUITY_JSON%;
-const tradeData = %TRADE_JSON%;
+const equityData = {json.dumps(equity_data)};
+const tradeData = {json.dumps(trade_data)};
+const GREEN = '#3fb950';
+const RED = '#f85149';
+const BLUE = '#58a6ff';
+const GRAY = '#8b949e';
+const BG = '#161b22';
+const GRID = '#30363d';
 
-const GREEN = '#3fb950', RED = '#f85149', BLUE = '#58a6ff', YELLOW = '#d29922', GRAY = '#8b949e';
+const commonOpts = {{
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {{
+        legend: {{ labels: {{ color: '#c9d1d9', font: {{ size: 11 }} }} }},
+        title: {{ display: true, color: '#c9d1d9', font: {{ size: 13 }} }}
+    }},
+    scales: {{
+        x: {{ grid: {{ color: GRID }}, ticks: {{ color: GRAY, maxTicksLimit: 10 }} }},
+        y: {{ grid: {{ color: GRID }}, ticks: {{ color: GRAY }} }}
+    }}
+}};
 
-// 1. Equity Chart
-new Chart(document.getElementById('equityChart'), {
+new Chart(document.getElementById('equityChart').getContext('2d'), {{
     type: 'line',
-    data: {
+    data: {{
         labels: equityData.labels,
-        datasets: [
-            { label: 'Equity', data: equityData.equity, borderColor: GREEN, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.1, pointRadius: 0 }
-        ]
-    },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#c9d1d9' } }, title: { display: true, text: 'Equity Curve', color: '#c9d1d9' } }, scales: { x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', maxTicksLimit: 10 } }, y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } } } }
-});
+        datasets: [{{
+            label: 'Equity',
+            data: equityData.equity,
+            borderColor: GREEN,
+            backgroundColor: 'rgba(63,185,80,0.1)',
+            fill: true,
+            tension: 0.1,
+            pointRadius: 0
+        }}]
+    }},
+    options: {{ ...commonOpts, plugins: {{ ...commonOpts.plugins, title: {{ ...commonOpts.plugins.title, text: 'Equity Curve (Realized)' }} }} }}
+}});
 
-// 2. Drawdown Chart
-new Chart(document.getElementById('drawdownChart'), {
+new Chart(document.getElementById('drawdownChart').getContext('2d'), {{
     type: 'line',
-    data: { labels: equityData.labels, datasets: [{ label: 'Drawdown %', data: equityData.drawdown, borderColor: RED, backgroundColor: 'rgba(248,81,73,0.1)', fill: true, tension: 0.1, pointRadius: 0 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#c9d1d9' } }, title: { display: true, text: 'Drawdown %', color: '#c9d1d9' } }, scales: { x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', maxTicksLimit: 10 } }, y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } } } }
-});
+    data: {{
+        labels: equityData.labels,
+        datasets: [{{
+            label: 'Drawdown %',
+            data: equityData.drawdown,
+            borderColor: RED,
+            backgroundColor: 'rgba(248,81,73,0.1)',
+            fill: true,
+            tension: 0.1,
+            pointRadius: 0
+        }}]
+    }},
+    options: {{ ...commonOpts, plugins: {{ ...commonOpts.plugins, title: {{ ...commonOpts.plugins.title, text: 'Drawdown % (Realized)' }} }} }}
+}});
 
-// 3. PnL Distribution (Bar chart)
-new Chart(document.getElementById('pnlDistChart'), {
+new Chart(document.getElementById('pnlDistChart').getContext('2d'), {{
     type: 'bar',
-    data: { labels: tradeData.pnl_dist.labels, datasets: [{ label: 'Frequency', data: tradeData.pnl_dist.values, backgroundColor: 'rgba(63,185,80,0.6)', borderColor: GREEN, borderWidth: 1 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: 'PnL Distribution', color: '#c9d1d9' } }, scales: { x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } } } }
-});
+    data: {{
+        labels: ['Wins', 'Losses'],
+        datasets: [{{
+            label: 'Count',
+            data: [{win_count}, {loss_count}],
+            backgroundColor: ['rgba(63,185,80,0.7)', 'rgba(248,81,73,0.7)'],
+            borderColor: [GREEN, RED],
+            borderWidth: 1
+        }}]
+    }},
+    options: {{ ...commonOpts, plugins: {{ ...commonOpts.plugins, title: {{ ...commonOpts.plugins.title, text: 'Win/Loss Distribution' }} }} }}
+}});
 
-// 4. Cumulative PnL
-new Chart(document.getElementById('cumPnlChart'), {
+new Chart(document.getElementById('cumPnlChart').getContext('2d'), {{
     type: 'line',
-    data: { labels: tradeData.cum_pnl.map((_,i)=>i), datasets: [{ label: 'Cumulative PnL', data: tradeData.cum_pnl, borderColor: GREEN, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.1, pointRadius: 0 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: 'Cumulative PnL', color: '#c9d1d9' } }, scales: { x: { display: false }, y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } } } }
-});
+    data: {{
+        labels: Array.from({{length: tradeData.cum_pnl.length}}, (_, i) => i + 1),
+        datasets: [{{
+            label: 'Cumulative PnL',
+            data: tradeData.cum_pnl,
+            borderColor: BLUE,
+            backgroundColor: 'rgba(88,166,255,0.1)',
+            fill: true,
+            tension: 0.1,
+            pointRadius: 0
+        }}]
+    }},
+    options: {{ ...commonOpts, plugins: {{ ...commonOpts.plugins, title: {{ ...commonOpts.plugins.title, text: 'Cumulative PnL' }} }} }}
+}});
 
-// 5. Holding Time Distribution
-new Chart(document.getElementById('holdTimeChart'), {
+new Chart(document.getElementById('holdTimeChart').getContext('2d'), {{
     type: 'bar',
-    data: { labels: tradeData.hold_dist.labels, datasets: [{ label: 'Frequency', data: tradeData.hold_dist.values, backgroundColor: 'rgba(88,166,255,0.6)', borderColor: BLUE, borderWidth: 1 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: 'Holding Time Distribution', color: '#c9d1d9' } }, scales: { x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } } } }
-});
+    data: {{
+        labels: ['<10m', '10-30m', '30-60m', '1-2h', '2-4h', '4h+'],
+        datasets: [{{
+            label: 'Trades',
+            data: (() => {{
+                const bins = [0, 0, 0, 0, 0, 0];
+                tradeData.hold_time.forEach(h => {{
+                    if (h < 10) bins[0]++;
+                    else if (h < 30) bins[1]++;
+                    else if (h < 60) bins[2]++;
+                    else if (h < 120) bins[3]++;
+                    else if (h < 240) bins[4]++;
+                    else bins[5]++;
+                }});
+                return bins;
+            }})(),
+            backgroundColor: 'rgba(88,166,255,0.7)',
+            borderColor: BLUE,
+            borderWidth: 1
+        }}]
+    }},
+    options: {{ ...commonOpts, plugins: {{ ...commonOpts.plugins, title: {{ ...commonOpts.plugins.title, text: 'Holding Time Distribution' }} }} }}
+}});
 
-// 6. DCA Count
-const dcaLabels = Object.keys(tradeData.dca).sort((a,b)=>a-b);
-const dcaValues = dcaLabels.map(k => tradeData.dca[k]);
-new Chart(document.getElementById('dcaChart'), {
+new Chart(document.getElementById('dcaChart').getContext('2d'), {{
     type: 'bar',
-    data: { labels: dcaLabels, datasets: [{ label: 'Frequency', data: dcaValues, backgroundColor: 'rgba(210,153,34,0.6)', borderColor: YELLOW, borderWidth: 1 }] },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, title: { display: true, text: 'DCA Count Distribution', color: '#c9d1d9' } }, scales: { x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } } } }
-});
+    data: {{
+        labels: tradeData.dca.labels,
+        datasets: [{{
+            label: 'DCA Count',
+            data: tradeData.dca.values,
+            backgroundColor: 'rgba(210,153,34,0.7)',
+            borderColor: '#d29922',
+            borderWidth: 1
+        }}]
+    }},
+    options: {{ ...commonOpts, plugins: {{ ...commonOpts.plugins, title: {{ ...commonOpts.plugins.title, text: 'DCA Count Distribution' }} }} }}
+}});
 </script>
-</body></html>"""
-
-    # ทำแทนที่ string ธรรมดา (หลีกเลี่ยง f-string formatting issue)
-    html_filled = template \
-        .replace("{SYMBOL}", symbol) \
-        .replace("{DATE}", datetime.now().strftime("%Y-%m-%d %H:%M")) \
-        .replace("{TOTAL_TRADES}", f"{stats['total_trades']:,}") \
-        .replace("{WIN_CLASS}", "positive" if stats['win_rate']>=90 else "negative") \
-        .replace("{WIN_RATE}", f"{stats['win_rate']:.2f}") \
-        .replace("{WIN_COUNT}", f"{stats['win_count']:,}") \
-        .replace("{LOSS_COUNT}", f"{stats['loss_count']:,}") \
-        .replace("{PNL_CLASS}", pnl_class) \
-        .replace("{TOTAL_PNL}", f"{stats['total_pnl_usd']:,.2f}") \
-        .replace("{TOTAL_PNL_PCT}", f"{stats['total_pnl_pct']:+.2f}") \
-        .replace("{FINAL_EQUITY}", f"{stats['final_equity']:,.2f}") \
-        .replace("{DD_CLASS}", dd_class) \
-        .replace("{MAX_DD}", f"{stats['max_drawdown_pct']:.2f}") \
-        .replace("{MAX_DD_USD}", f"{stats['max_drawdown_usd']:,.2f}") \
-        .replace("{TOTAL_FEES}", f"{stats['total_fees_usd']:,.2f}") \
-        .replace("{AVG_HOLD}", f"{stats['avg_holding_minutes']:.0f}") \
-        .replace("{AVG_DCA}", f"{stats['avg_dca_count']:.1f}") \
-        .replace("{MAX_DCA}", f"{stats['max_dca_count']}") \
-        .replace("{TRADE_ROWS}", trade_rows) \
-        .replace("%EQUITY_JSON%", equity_json) \
-        .replace("%TRADE_JSON%", trade_json)
+</body>
+</html>"""
 
     report_path = output_path / f"{symbol}_report.html"
-    report_path.write_text(html_filled, encoding="utf-8")
+    report_path.write_text(html, encoding="utf-8")
     size_mb = report_path.stat().st_size / 1024 / 1024
-    print(f"Report saved: {report_path} size={size_mb:.2f}MB")
-    return str(report_path)
+    print(f"Report saved: {report_path} ({size_mb:.2f} MB)")
