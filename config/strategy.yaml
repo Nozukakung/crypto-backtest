@@ -27,7 +27,8 @@ position:
   dca_max_cap_usd: 50000.0              # เพดานสูงสุดต่อคู่
   long_timeout_minutes: 30              # Long ค้าง 30 นาที → รีเฟรช
   short_timeout_minutes: 120            # Short ค้าง 120 นาที → ออก
-  initial_size_usd: 100.0                 # ขนาดไม้แรก (FIXED)
+  cooldown_minutes: 5                      # cool down หลังปิด position
+  funding_rate_per_8h: 0.01               # จำลอง funding rate ทุก 8 ชม.
 
 risk:
   max_position_per_pair: 10000.0          # เริ่มต้นจำกัด (ปรับได้ในอนาคต)

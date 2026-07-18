@@ -32,8 +32,6 @@ def create_equity_chart_data(equity_df, symbol):
     return {
         "labels": [str(t)[:16] for t in df["timestamp"]],
         "equity": [round(float(x), 2) for x in df["equity"]],
-        "capital": [round(float(x), 2) for x in df["capital"]],
-        "unrealized": [round(float(x), 2) for x in df["unrealized_pnl"]],
         "drawdown": [round(float(x), 2) for x in -dd],
     }
 
@@ -188,8 +186,7 @@ new Chart(document.getElementById('equityChart'), {
     data: {
         labels: equityData.labels,
         datasets: [
-            { label: 'Equity', data: equityData.equity, borderColor: GREEN, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.1, pointRadius: 0 },
-            { label: 'Realized Capital', data: equityData.capital, borderColor: BLUE, borderDash: [5,5], borderWidth: 1, fill: false, pointRadius: 0 }
+            { label: 'Equity', data: equityData.equity, borderColor: GREEN, backgroundColor: 'rgba(63,185,80,0.1)', fill: true, tension: 0.1, pointRadius: 0 }
         ]
     },
     options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#c9d1d9' } }, title: { display: true, text: 'Equity Curve', color: '#c9d1d9' } }, scales: { x: { grid: { color: '#30363d' }, ticks: { color: '#8b949e', maxTicksLimit: 10 } }, y: { grid: { color: '#30363d' }, ticks: { color: '#8b949e' } } } }
