@@ -1,13 +1,9 @@
 """
-engine/position.py — Position Manager v6 (Dynamic DCA Spacing)
-
-เพิ่ม:
-- Dynamic DCA Spacing: ระยะห่างขยายขึ้นเรื่อยๆ ตามจำนวนไม้ DCA
-  ไม้ 1: ห่าง 0.3% | ไม้ 2: ห่าง 0.6% | ไม้ 3: ห่าง 1.2% | ...
-- ป้องกันการถัวเร็วเกินไปในช่วง Bull Run
+engine/position.py — Position Manager v7 (Exchange Precision Rules)
 """
 from dataclasses import dataclass
 from typing import List
+from engine.exchange import round_price, calculate_qty_for_notional, calculate_actual_notional, get_symbol_info
 
 
 @dataclass
@@ -15,6 +11,7 @@ class TradeRecord:
     timestamp: str
     action: str
     price: float
+    qty: float
     size_usd: float
     fee_usd: float
     funding_usd: float = 0.0
@@ -39,21 +36,33 @@ class Position:
         self.liquidation_price = 0.0
         self.merged_orders = False
 
-        # Dynamic DCA Spacing
+        # DCA Parameters
         self.dca_base_distance_pct = config.get("dca_trigger_below_bep_percent", 0.3) / 100.0
-        self.dca_multiplier = config.get("dca_multiplier", 2.0)  # ขยาย distance × multiplier ทุกไม้
-        self.dca_max_cap_usd = config.get("dca_max_cap_usd", 50000.0)
+        self.dca_multiplier = config.get("dca_multiplier", 1.0)
+        self.dca_max_cap_usd = config.get("dca_max_cap_usd", 30000.0)
 
-    def add_trade(self, timestamp, action, price, size_usd, fee_rate):
-        qty = size_usd / price
-        fee_usd = size_usd * fee_rate
-        self.total_size_usd += size_usd
+    def add_trade(self, timestamp, action, price, target_size_usd, fee_rate):
+        # 1) ปัดเศษราคาตาม Tick Size
+        price = round_price(self.symbol, price)
+        
+        # 2) คำนวณ qty ตาม Lot Size
+        qty = calculate_qty_for_notional(self.symbol, target_size_usd, price)
+        
+        # 3) มูลค่าจริงที่สั่ง (หลังปัดเศษ)
+        actual_size_usd = calculate_actual_notional(self.symbol, qty, price)
+        
+        # 4) คิดค่าธรรมเนียมจริง
+        fee_usd = actual_size_usd * fee_rate
+        
+        self.total_size_usd += actual_size_usd
         self.total_qty += qty
         self.total_fees_usd += fee_usd
+        
         self.records.append(TradeRecord(
-            timestamp=timestamp, action=action, price=price,
-            size_usd=size_usd, fee_usd=fee_usd
+            timestamp=timestamp, action=action, price=price, qty=qty,
+            size_usd=actual_size_usd, fee_usd=fee_usd
         ))
+        
         if action == "DCA":
             self.dca_count += 1
         if action in ("OPEN", "DCA"):
@@ -64,7 +73,10 @@ class Position:
 
     @property
     def entry_price(self):
-        return self.total_size_usd / self.total_qty if self.total_qty > 0 else 0.0
+        if self.total_qty == 0:
+            return 0.0
+        # ปัดเศษราคาเฉลี่ย
+        return round_price(self.symbol, self.total_size_usd / self.total_qty)
 
     @property
     def margin_used(self):
@@ -72,41 +84,30 @@ class Position:
 
     @property
     def bep(self):
-        """BEP = entry_price + (total_costs) / qty"""
         if self.total_qty == 0:
             return 0.0
         total_costs = self.total_fees_usd + self.total_funding_usd
         cost_per_qty = total_costs / self.total_qty
         if self.side == "LONG":
-            return self.entry_price + cost_per_qty
+            raw_bep = self.entry_price + cost_per_qty
         else:
-            return self.entry_price - cost_per_qty
+            raw_bep = self.entry_price - cost_per_qty
+        return round_price(self.symbol, raw_bep)
 
     @property
     def take_profit_price(self):
         tp_offset = self.config.get("take_profit_above_bep_percent", 0.2) / 100.0
         if self.side == "LONG":
-            return self.bep * (1.0 + tp_offset)
+            tp = self.bep * (1.0 + tp_offset)
         else:
-            return self.bep * (1.0 - tp_offset)
+            tp = self.bep * (1.0 - tp_offset)
+        return round_price(self.symbol, tp)
 
     @property
     def current_dca_distance_pct(self):
-        """
-        Dynamic DCA Distance:
-        ไม้ที่ 0 (ครั้งแรกที่ DCA): base_distance (0.3%)
-        ไม้ที่ 1: base_distance × multiplier (0.6%)
-        ไม้ที่ 2: base_distance × multiplier^2 (1.2%)
-        ไม้ที่ 3: base_distance × multiplier^3 (2.4%)
-        ฯลฯ
-        """
         return self.dca_base_distance_pct * (self.dca_multiplier ** self.dca_count)
 
     def check_dca_trigger(self, current_price):
-        """
-        Dynamic DCA trigger:
-        ห่างจาก BEP มากกว่า current_dca_distance_pct → DCA
-        """
         if self.total_size_usd + self.initial_size_usd > self.dca_max_cap_usd:
             return False
 
@@ -129,9 +130,10 @@ class Position:
 
     def update_liquidation_price(self):
         if self.side == "LONG":
-            self.liquidation_price = self.entry_price * (1.0 - 1.0 / self.leverage)
+            liq = self.entry_price * (1.0 - 1.0 / self.leverage)
         else:
-            self.liquidation_price = self.entry_price * (1.0 + 1.0 / self.leverage)
+            liq = self.entry_price * (1.0 + 1.0 / self.leverage)
+        self.liquidation_price = round_price(self.symbol, liq)
 
     def check_liquidation(self, current_price):
         if self.liquidation_price == 0.0:
@@ -141,12 +143,19 @@ class Position:
         else:
             return current_price >= self.liquidation_price
 
+    def unrealized_pnl(self, current_price):
+        if self.side == "LONG":
+            return (current_price - self.entry_price) * self.total_qty - self.total_fees_usd - self.total_funding_usd
+        else:
+            return (self.entry_price - current_price) * self.total_qty - self.total_fees_usd - self.total_funding_usd
+
     def close(self, timestamp, exit_price, fee_rate):
         self.status = "CLOSED"
+        exit_price = round_price(self.symbol, exit_price)
         exit_fee = self.total_size_usd * fee_rate
         self.total_fees_usd += exit_fee
         self.records.append(TradeRecord(
-            timestamp=timestamp, action="CLOSE", price=exit_price,
+            timestamp=timestamp, action="CLOSE", price=exit_price, qty=self.total_qty,
             size_usd=self.total_size_usd, fee_usd=exit_fee
         ))
         return exit_fee
@@ -155,7 +164,7 @@ class Position:
         self.status = "LIQUIDATED"
         self.liquidated = True
         self.records.append(TradeRecord(
-            timestamp=timestamp, action="LIQUIDATE", price=liq_price,
+            timestamp=timestamp, action="LIQUIDATE", price=liq_price, qty=self.total_qty,
             size_usd=self.total_size_usd, fee_usd=0.0
         ))
         return self.margin_used
@@ -164,6 +173,7 @@ class Position:
         self.holding_time_minutes += 1
 
     def pnl(self, exit_price):
+        exit_price = round_price(self.symbol, exit_price)
         if self.side == "LONG":
             gross = (exit_price - self.entry_price) * self.total_qty
         else:
