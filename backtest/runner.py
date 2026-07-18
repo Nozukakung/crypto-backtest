@@ -41,6 +41,11 @@ def run_backtest(symbol, cfg=None):
     capital = strategy_cfg.get("initial_capital", 10000.0)
     size_per_trade = strategy_cfg.get("size_per_trade_usd", 100.0)
     leverage = strategy_cfg.get("leverage", 10)
+    
+    # ส่ง leverage เข้า position_cfg
+    position_cfg = position_cfg.copy()
+    position_cfg["leverage"] = leverage
+    
     cooldown_minutes = position_cfg.get("cooldown_minutes", 5)
     max_cap = position_cfg.get("dca_max_cap_usd", 50000.0)
     fee_rate = order_cfg.get("fee_rate_maker", 0.02) / 100.0
