@@ -1,14 +1,46 @@
 """
-analytics/report.py — HTML Report (v2: แก้ไข JSON data injection และ JavaScript double curly braces)
+analytics/report.py — HTML Report v3 (Exchange Precision Display)
+แสดงผลทศนิยมตามจริงของแต่ละเหรียญ
 """
 import pandas as pd
 import numpy as np
 import json
 from pathlib import Path
 from datetime import datetime
+from engine.exchange import get_symbol_info, round_to_precision
 
 
 MAX_POINTS = 2000
+
+
+def fmt_price(symbol, value):
+    """แสดงราคาตาม Price Precision ของแต่ละเหรียญ"""
+    info = get_symbol_info(symbol)
+    if info.price_precision < 0:
+        # เช่น precision=-1 = ปัดเป็นหลัก 10
+        return f"${round_to_precision(value, info.price_precision):,.0f}"
+    return f"${value:,.{info.price_precision}f}"
+
+
+def fmt_qty(symbol, value):
+    """แสดงจำนวนตาม Qty Precision ของแต่ละเหรียญ"""
+    info = get_symbol_info(symbol)
+    if info.qty_precision == 0:
+        return f"{value:,.0f}"
+    return f"{value:,.{info.qty_precision}f}"
+
+
+def fmt_usd(value):
+    """แสดงเงิน USD (ใช้ 2 ตำแหน่งเท่ากันตลอด)"""
+    return f"${value:,.2f}"
+
+
+def fmt_pct(x):
+    return f"{x:+.2f}%"
+
+
+def color_class(x):
+    return "positive" if x >= 0 else "negative"
 
 
 def sample_dataframe(df, max_points=MAX_POINTS):
@@ -59,21 +91,11 @@ def create_trade_chart_data(trades_df):
     }
 
 
-def fmt_money(x):
-    return f"${x:,.2f}"
-
-
-def fmt_pct(x):
-    return f"{x:+.2f}%"
-
-
-def color_class(x):
-    return "positive" if x >= 0 else "negative"
-
-
 def generate_html_report(symbol, stats, equity_df, trades_df, result=None, output_dir="reports"):
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True)
+
+    info = get_symbol_info(symbol)
 
     # Separate closed vs END_OF_DATA
     normal_trades = trades_df[trades_df["close_reason"] != "END_OF_DATA"]
@@ -90,26 +112,26 @@ def generate_html_report(symbol, stats, equity_df, trades_df, result=None, outpu
     equity_data = create_equity_chart_data(equity_df)
     trade_data = create_trade_chart_data(trades_df)
 
-    # Calculate win/loss counts for chart
+    # Calculate win/loss counts
     win_count = len([x for x in trade_data["pnl"] if x > 0])
     loss_count = len([x for x in trade_data["pnl"] if x < 0])
 
-    # Prepare trade table data (last 20)
+    # Prepare trade table (last 20)
     display_trades = trades_df.tail(20).iloc[::-1]
 
-    # Build table rows
     trade_rows = []
     for _, row in display_trades.iterrows():
         open_time = str(row["open_time"])[:16]
         close_time = str(row["close_time"])[:16]
         side = row["side"]
-        ep = f"${row['ep']:,.2f}"
-        bep = f"${row['bep']:,.2f}"
+        ep = fmt_price(symbol, row['ep'])
+        bep = fmt_price(symbol, row['bep'])
+        qty = fmt_qty(symbol, row.get('qty', row['ep'] * row['dca_count'] / row['ep'] if row['ep'] > 0 else 0))
         dca = int(row["dca_count"])
         pnl = row["pnl_usd"]
         reason = row["close_reason"]
         pnl_class = "positive" if pnl >= 0 else "negative"
-        pnl_str = fmt_money(pnl)
+        pnl_str = fmt_usd(pnl)
         trade_rows.append(f"""
             <tr>
                 <td>{open_time}</td>
@@ -123,6 +145,15 @@ def generate_html_report(symbol, stats, equity_df, trades_df, result=None, outpu
             </tr>""")
 
     trade_table = "".join(trade_rows)
+
+    # Exchange info display
+    exchange_info = f"""
+    <div class="info-box">
+        <h3>⚙️ Exchange Rules ({symbol})</h3>
+        <p>Price Precision: {info.price_precision} ตำแหน่ง (เช่น {fmt_price(symbol, 12345.6)})</p>
+        <p>Qty Precision: {info.qty_precision} ตำแหน่ง (เช่น {fmt_qty(symbol, 1.234)})</p>
+        <p>Min Qty: {fmt_qty(symbol, info.min_qty)} | Min Notional: ${info.min_notional}</p>
+    </div>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="th">
@@ -163,31 +194,33 @@ def generate_html_report(symbol, stats, equity_df, trades_df, result=None, outpu
     <h1>📈 Backtest Report — {symbol}</h1>
     <p style="text-align:center;color:#8b949e;">Mean Reversion + DCA (RSI Signal) | {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
 
+    {exchange_info}
+
     <div class="info-box warning">
         <h3>⚠️ หมายเหตุสำคัญ</h3>
         <p><strong>Equity Curve = Realized Equity เท่านั้น</strong> (ติดตามเฉพาะ PnL ที่ปิด position แล้ว)</p>
-        <p>Max Drawdown = {stats['max_drawdown_pct']:.2f}% (ตาม realized capital PnL)</p>
+        <p>Max Drawdown = {stats.get('max_drawdown_pct', 0):.2f}% (ตาม realized capital PnL)</p>
         <p><strong>END_OF_DATA = Position ค้างตอนจบข้อมูล</strong> ยังไม่ได้ปิด TP (ในจริงจะรอต่อจนปิดได้)</p>
+        <p><strong>ทุกราคา/จำนวนในตาราง = ปัดตาม Exchange Rules จริงแล้ว</strong></p>
     </div>
 
     <h2>📊 Summary (Closed Positions Only)</h2>
     <div class="stats-grid">
         <div class="stat-card"><div class="label">Closed Trades</div><div class="value">{normal_count:,}</div><div class="unit">trades</div></div>
         <div class="stat-card"><div class="label">Win Rate</div><div class="value positive">{normal_win_rate:.2f}%</div><div class="unit">{normal_win}W / {normal_count - normal_win}L</div></div>
-        <div class="stat-card"><div class="label">Closed PnL</div><div class="value {color_class(normal_pnl)}">{fmt_money(normal_pnl)}</div><div class="unit">{fmt_pct(normal_pnl / stats.get('initial_capital', 10000) * 100)}</div></div>
-        <div class="stat-card"><div class="label">Final Equity</div><div class="value">{fmt_money(stats['final_equity'])}</div><div class="unit">USD</div></div>
-        <div class="stat-card"><div class="label">Max Drawdown</div><div class="value positive">{stats['max_drawdown_pct']:.2f}%</div><div class="unit">${stats['max_drawdown_usd']:,.2f}</div></div>
-        <div class="stat-card"><div class="label">Total Fees</div><div class="value">{fmt_money(stats['total_fees_usd'])}</div><div class="unit">USD</div></div>
-        <div class="stat-card"><div class="label">Avg Hold Time</div><div class="value">{stats['avg_holding_minutes']:.0f}</div><div class="unit">min</div></div>
-        <div class="stat-card"><div class="label">Avg DCA Count</div><div class="value">{stats['avg_dca_count']:.1f}</div><div class="unit">max {stats['max_dca_count']}</div></div>
+        <div class="stat-card"><div class="label">Closed PnL</div><div class="value {color_class(normal_pnl)}">{fmt_usd(normal_pnl)}</div><div class="unit">{fmt_pct(normal_pnl / stats.get('initial_capital', 10000) * 100)}</div></div>
+        <div class="stat-card"><div class="label">Final Equity</div><div class="value">{fmt_usd(stats.get('final_equity', 0))}</div><div class="unit">USD</div></div>
+        <div class="stat-card"><div class="label">Max Drawdown</div><div class="value positive">{stats.get('max_drawdown_pct', 0):.2f}%</div><div class="unit">{fmt_usd(stats.get('max_drawdown_usd', 0))}</div></div>
+        <div class="stat-card"><div class="label">Total Fees</div><div class="value">{fmt_usd(stats.get('total_fees_usd', 0))}</div><div class="unit">USD</div></div>
+        <div class="stat-card"><div class="label">Avg Hold Time</div><div class="value">{stats.get('avg_holding_minutes', 0):.0f}</div><div class="unit">min</div></div>
+        <div class="stat-card"><div class="label">Avg DCA Count</div><div class="value">{stats.get('avg_dca_count', 0):.1f}</div><div class="unit">max {stats.get('max_dca_count', 0)}</div></div>
     </div>
 
     {f'''
     <h2>⚠️ END_OF_DATA Positions (ยังไม่ได้ปิด TP)</h2>
     <div class="stats-grid">
         <div class="stat-card"><div class="label">Open Positions</div><div class="value warning">{end_count}</div><div class="unit">positions</div></div>
-        <div class="stat-card"><div class="label">Unrealized PnL</div><div class="value negative">{fmt_money(end_pnl)}</div><div class="unit">{fmt_pct(end_pnl / stats.get('initial_capital', 10000) * 100)}</div></div>
-        <div class="stat-card"><div class="label">Note</div><div class="value warning">รอราคากลับถึง TP</div><div class="unit">In real trading: hold until TP</div></div>
+        <div class="stat-card"><div class="label">Unrealized PnL</div><div class="value negative">{fmt_usd(end_pnl)}</div><div class="unit">{fmt_pct(end_pnl / stats.get('initial_capital', 10000) * 100)}</div></div>
     </div>
     ''' if end_count > 0 else ''}
 
@@ -205,15 +238,18 @@ def generate_html_report(symbol, stats, equity_df, trades_df, result=None, outpu
         <div class="chart-container"><canvas id="dcaChart"></canvas></div>
     </div>
 
-    <h2>📋 Trade Log (Last 20)</h2>
+    <h2>📋 Trade Log (Last 20) — ทศนิยมตาม Exchange Rules จริง</h2>
+    <p style="color:#8b949e;margin-bottom:10px;">
+        Price: {info.price_precision} ตำแหน่ง | Qty: {info.qty_precision} ตำแหน่ง
+    </p>
     <table>
-        <tr><th>Open</th><th>Close</th><th>Side</th><th>EP</th><th>BEP</th><th>DCA</th><th>PnL</th><th>Reason</th></tr>
+        <tr><th>Open</th><th>Close</th><th>Side</th><th>EP (Price)</th><th>BEP (Price)</th><th>DCA</th><th>PnL (USD)</th><th>Reason</th></tr>
         {trade_table}
     </table>
 
     <div class="footer">
-        <p>Generated by Crypto Backtest Engine v1.0</p>
-        <p>Strategy: Mean Reversion + DCA (RSI Signal, TF 1m)</p>
+        <p>Generated by Crypto Backtest Engine v2.1</p>
+        <p>Strategy: Mean Reversion + DCA (RSI Signal, TF 1m) | Exchange Precision: {symbol}</p>
     </div>
 
 <script>
@@ -223,7 +259,6 @@ const GREEN = '#3fb950';
 const RED = '#f85149';
 const BLUE = '#58a6ff';
 const GRAY = '#8b949e';
-const BG = '#161b22';
 const GRID = '#30363d';
 
 const commonOpts = {{
