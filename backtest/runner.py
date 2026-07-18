@@ -1,11 +1,5 @@
 """
-backtest/runner.py — Backtest v4 (แก้ตามตาเล็ก 100%)
-
-Logic ที่แก้:
-1. Order Loop ทุก 1 นาที: ยกเลิก order ไม่ match → กลับเช็ค signal ใหม่
-2. Monitor ทุก 5 นาที: เช็ค position, Long >30min / Short >120min → มัดรวม order
-3. BEP ใช้ Exchange value (ผ่าน position.bep property)
-4. DCA: ห่างจาก BEP >0.3% ถึงถั่ว, ใกล้ 0.3% ข้าม
+backtest/runner.py — Backtest v5 (Leverage 10x + Liquidation Check)
 """
 import yaml
 import pandas as pd
@@ -46,6 +40,7 @@ def run_backtest(symbol, cfg=None):
 
     capital = strategy_cfg.get("initial_capital", 10000.0)
     size_per_trade = strategy_cfg.get("size_per_trade_usd", 100.0)
+    leverage = strategy_cfg.get("leverage", 10)
     cooldown_minutes = position_cfg.get("cooldown_minutes", 5)
     max_cap = position_cfg.get("dca_max_cap_usd", 50000.0)
     fee_rate = order_cfg.get("fee_rate_maker", 0.02) / 100.0
@@ -84,12 +79,11 @@ def run_backtest(symbol, cfg=None):
     long_count = int(df["signal_long"].sum())
     short_count = int(df["signal_short"].sum())
     print(f"   Long: {long_count:,} | Short: {short_count:,}")
-    print(f"   Signal rate: {(long_count+short_count)/total_rows*100:.2f}%")
 
     # ====== Simulate ======
     portfolio = Portfolio(initial_capital=capital)
     position = None
-    active_order = None  # {"price": float, "side": "LONG"/"SHORT", "is_tp": bool}
+    active_order = None
 
     timestamps = df["timestamp"].values
     opens = df["open"].values
@@ -112,21 +106,20 @@ def run_backtest(symbol, cfg=None):
         high = highs[i]
         low = lows[i]
 
-        # Funding every 480 min (8h)
+        # Funding
         funding_tick += 1
         if funding_tick >= 480 and position and position.status == "OPEN":
             funding_per_unit = price * funding_rate_per_8h
             position.apply_funding(funding_per_unit * position.total_qty)
             funding_tick = 0
 
-        # Cooldown after TP
+        # Cooldown
         if cooldown_remaining > 0:
             cooldown_remaining -= 1
             portfolio.update_equity(ts)
             progress.update(1)
             continue
 
-        # ======= Monitor (ทุก 5 นาที) =======
         monitor_tick += 1
         monitor_triggered = monitor_tick >= monitor_interval
         if monitor_triggered:
@@ -137,7 +130,30 @@ def run_backtest(symbol, cfg=None):
             position.update_time()
             side = position.side
 
-            # 1) TP check (ใช้ high/low เพื่อให้ match จริง)
+            # 1) Liquidation Check
+            if position.check_liquidation(low if side == "LONG" else high):
+                # โดน Liquidate! (เสีย Margin ที่ใช้ไปทั้งหมด)
+                loss_usd = position.margin_used
+                position.liquidate(ts, position.liquidation_price, fee_rate)
+                portfolio.record_trade(TradeLog(
+                    symbol=symbol, side=side,
+                    open_time=position.records[0].timestamp, close_time=ts,
+                    ep=position.entry_price, bep=position.bep,
+                    tp=position.take_profit_price, dca_count=position.dca_count,
+                    pnl_usd=round(-loss_usd, 2),
+                    pnl_pct=round(-100.0, 4),
+                    fee_usd=round(position.total_fees_usd, 2),
+                    holding_minutes=position.holding_time_minutes,
+                    close_reason="LIQUIDATED",
+                ))
+                portfolio.update_equity(ts)
+                position = None
+                active_order = None
+                cooldown_remaining = cooldown_minutes
+                progress.update(1)
+                continue
+
+            # 2) TP check
             if side == "LONG" and high >= position.take_profit_price:
                 exit_price = position.take_profit_price
                 position.close(ts, exit_price, fee_rate)
@@ -182,54 +198,49 @@ def run_backtest(symbol, cfg=None):
                 progress.update(1)
                 continue
 
-            # 2) Monitor: เช็ค timeout และมัดรวม order
+            # 3) Monitor (มัดรวม)
             if monitor_triggered:
                 timeout_hit = (side == "LONG" and position.holding_time_minutes >= long_timeout) or \
                              (side == "SHORT" and position.holding_time_minutes >= short_timeout)
 
                 if timeout_hit:
-                    # ตาเล็ก: "ยกเลิกทุก order แล้วมัดรวมเหลือ order เดียว"
-                    # "ตั้งราคาใหม่ที่ BEP + 0.2%"
                     position.merge_orders(ts, fee_rate)
-                    # active_order ถูก reset ไปที่ TP ใหม่
                     active_order = {
                         "price": position.take_profit_price,
                         "side": "SELL" if side == "LONG" else "BUY",
                         "is_tp": True,
                     }
 
-            # 3) DCA check (ใช้ low/high ของแท่งเทียน)
+            # 4) DCA Check
+            # อัปเดต liquidation price หลัง DCA
             if position.check_dca_trigger(low if side == "LONG" else high):
                 dca_price = maker_price(price, side, offset_pct)
                 position.add_trade(ts, "DCA", dca_price, size_per_trade, fee_rate)
-                # หลัง DCA: active_order update ไปที่ TP ใหม่
+                position.update_liquidation_price()
                 active_order = {
                     "price": position.take_profit_price,
                     "side": "SELL" if side == "LONG" else "BUY",
                     "is_tp": True,
                 }
 
-            # 4) Order Loop ทุก 1 นาที (Entry order ที่ยังไม่ match)
+            # 5) Order Loop ทุก 1 นาที
             if active_order and not active_order.get("is_tp"):
-                # Entry order: ตรวจสอบว่า match หรือไม่
                 order_p = active_order["price"]
                 if side == "LONG":
-                    # Long entry: buy limit ต่ำกว่า market
                     if low <= order_p:
-                        # Match! → เปิด position
                         position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
+                        position.update_liquidation_price()
                         active_order = {
                             "price": position.take_profit_price,
                             "side": "SELL",
                             "is_tp": True,
                         }
                     else:
-                        # ไม่ match → ยกเลิก → กลับไปเช็ค signal ใหม่ (ทำที่บรรทัดสุดท้าย)
                         active_order = None
                 else:
-                    # Short entry: sell limit สูงกว่า market
                     if high >= order_p:
                         position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
+                        position.update_liquidation_price()
                         active_order = {
                             "price": position.take_profit_price,
                             "side": "BUY",
@@ -242,12 +253,10 @@ def run_backtest(symbol, cfg=None):
             progress.update(1)
             continue
 
-        # ======= No position → เช็ค Signal + วาง Order =======
+        # ======= No position → เช็ค Signal (Long + Short) =======
         if signal_long[i]:
             order_price = maker_price(price, "LONG", offset_pct)
-            # ตรวจสอบ match ทันที (ใช้ low ของแท่งนี้)
             if low <= order_price:
-                # Match ทันที
                 pos = Position(symbol, "LONG", size_per_trade, position_cfg)
                 pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
                 position = pos
@@ -257,13 +266,11 @@ def run_backtest(symbol, cfg=None):
                     "is_tp": True,
                 }
             else:
-                # ไม่ match → วาง order ค้างไว้ (จะถูกเช็ค match ใน candle ถัดไป)
                 active_order = {
                     "price": order_price,
                     "side": "LONG",
                     "is_tp": False,
                 }
-
             portfolio.update_equity(ts)
 
         elif signal_short[i]:
@@ -283,7 +290,6 @@ def run_backtest(symbol, cfg=None):
                     "side": "SHORT",
                     "is_tp": False,
                 }
-
             portfolio.update_equity(ts)
 
         else:
@@ -299,59 +305,40 @@ def run_backtest(symbol, cfg=None):
         last_price = closes[-1]
         position.close(last_ts, last_price, fee_rate)
         pnl = position.pnl(last_price)
-        pf = position.total_size_usd
         portfolio.record_trade(TradeLog(
             symbol=symbol, side=position.side,
             open_time=position.records[0].timestamp, close_time=last_ts,
             ep=position.entry_price, bep=position.bep,
             tp=position.take_profit_price, dca_count=position.dca_count,
             pnl_usd=round(pnl, 2),
-            pnl_pct=round(pnl / pf * 100 if pf > 0 else 0, 4),
+            pnl_pct=round(pnl / position.total_size_usd * 100, 4) if position.total_size_usd > 0 else 0.0,
             fee_usd=round(position.total_fees_usd, 2),
             holding_minutes=position.holding_time_minutes,
             close_reason="END_OF_DATA",
         ))
 
     stats = portfolio.get_stats()
-
-    # Separate END_OF_DATA
-    end_data_trades = [t for t in portfolio.trade_logs if t.close_reason == "END_OF_DATA"]
-    normal_trades = [t for t in portfolio.trade_logs if t.close_reason != "END_OF_DATA"]
-
-    if end_data_trades:
-        end_pnl = sum(t.pnl_usd for t in end_data_trades)
-        print(f"   ⚠️  {len(end_data_trades)} position(s) open at END_OF_DATA → PnL ${end_pnl:+,.2f}")
-    if normal_trades:
-        normal_pnl = sum(t.pnl_usd for t in normal_trades)
-        normal_win = sum(1 for t in normal_trades if t.pnl_usd > 0)
-        print(f"   ✅ Closed: {len(normal_trades)} trades, Win {normal_win/len(normal_trades)*100:.2f}%, PnL ${normal_pnl:+,.2f}")
-
     return {
         "stats": stats,
         "equity_curve": portfolio.to_dataframe(),
         "trades": portfolio.trades_to_dataframe(),
-        "normal_pnl": sum(t.pnl_usd for t in normal_trades),
-        "normal_trades_count": len(normal_trades),
-        "end_data_pnl": sum(t.pnl_usd for t in end_data_trades),
-        "end_data_count": len(end_data_trades),
     }
 
 
 def print_stats(stats, symbol):
     print(f"\n{'='*60}")
-    print(f"📈 {symbol}")
+    print(f"📈 {symbol} (Leverage 10x)")
     print(f"{'='*60}")
     if "error" in stats:
         print(f"   {stats['error']}")
         return
     print(f"   Trades:     {stats['total_trades']:,}")
-    print(f"   Win Rate:   {stats['win_rate']:.2f}%")
+    print(f"   Win Rate:   {stats['win_rate']:.2f}% (Wins: {stats['win_count']:,} | Losses: {stats['loss_count']:,})")
     print(f"   PnL:        ${stats['total_pnl_usd']:+,.2f} ({stats['total_pnl_pct']:+.2f}%)")
     print(f"   Equity:     ${stats['final_equity']:+,.2f}")
     print(f"   Max DD:     {stats['max_drawdown_pct']:.2f}% (${stats['max_drawdown_usd']:+,.2f})")
     print(f"   Fees:       ${stats['total_fees_usd']:+,.2f}")
     print(f"   Avg Hold:   {stats['avg_holding_minutes']:.0f} min")
-    print(f"   Avg DCA:    {stats['avg_dca_count']:.1f} (max {stats['max_dca_count']})")
     print(f"{'='*60}\n")
 
 
