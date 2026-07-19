@@ -29,7 +29,7 @@ position:
   dca_trigger_below_bep_percent: 0.3    # DCA base distance 0.3%
   dca_multiplier: 1.0                   # Fixed spacing (Dynamic = body)
   dca_max_cap_usd: 50000.0              # เพดาน $50K (ตาเล็ก)
-  dca_size_mode: "martingale"           # ทบ x2 ทุก DCA ไม้!
+  dca_size_mode: "fixed"              # Fixed $100 ทุกไม้
   short_timeout_minutes: 120
   long_timeout_minutes: 30
   monitor_interval_minutes: 5
