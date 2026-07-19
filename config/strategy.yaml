@@ -1,37 +1,37 @@
-# config/strategy.yaml — พารามิเตอร์กลยุทธ์ทั้งหมด
+# config/strategy.yaml
 strategy:
-  name: "Mean Reversion + DCA"
+  name: "DCA Short Only Martingale"
   type: "crypto_futures"
   timeframe: "1m"
   initial_capital: 10000.0          # ทุนเริ่มต้น (USD)
   leverage: 3                       # Leverage 3x (Futures)
-  size_per_trade_usd: 100.0         # ขนาดไม้ละ (USD) - FIXED
+  size_per_trade_usd: 100.0         # เริ่มต้นไม้ละ $100 (เท่า min_notional)
   max_positions: 1                  # เปิดพร้อมกันได้สูงสุด
 
 signal:
   rsi_period: 14
-  rsi_long_threshold: 40.0          # RSI < 40 = ไป Long
-  rsi_short_threshold: 60.0         # RSI > 60 = ไป Short
-  max_consecutive_high: 5           # ไม่เปิด Long ถ้ามีแท่งเขียวติดกัน 5
-  avoid_touch_pattern: true         # ไม่เปิดถ้าเจอแพทเทิร์น "แตะ→แตะ→แตะ"
+  rsi_long_threshold: 40.0
+  rsi_short_threshold: 60.0
+  max_consecutive_high: 5
+  max_consecutive_low: 5
+  avoid_touch_pattern: true
+  score_range_low: 0.3
+  score_range_high: 0.7
 
 order:
-  type: "limit"
-  price_offset_percent: 0.05        # ห่างจากราคา 0.05% (Maker)
-  fee_rate_maker: 0.02              # Maker fee (%)
-  fee_rate_taker: 0.045             # Taker fee (%)
-  rebalance_interval_minutes: 1     # รีเฟรชทุก 1 นาที
+  type: "limit"                      # Maker order (รอคิว)
+  price_offset_percent: 0.05         # ห่างตลาด 0.05%
+  fee_rate_maker: 0.02               # Maker fee 0.02%
+  timeout_seconds: 60
 
 position:
   take_profit_above_bep_percent: 0.2    # TP = BEP + 0.2%
   dca_trigger_below_bep_percent: 0.3    # DCA base distance 0.3%
-  dca_multiplier: 1.0                  # Fixed (ไม่ใช่ Dynamic) = 0.3% ทุกไม้
-  dca_max_cap_usd: 30000.0              # เพดานสูงสุดต่อคู่ (ลดจาก 50K)
-  long_timeout_minutes: 30              # Long ค้าง 30 นาที → มัดรวม order
-  short_timeout_minutes: 120            # Short ค้าง 120 นาที → มัดรวม order
-  cooldown_minutes: 5                   # cool down หลังปิด position
-  funding_rate_per_8h: 0.01             # จำลอง funding rate ทุก 8 ชม.
-
-risk:
-  max_position_per_pair: 50000.0        # Max position cap
-  max_drawdown_alert_percent: 30.0      # แจ้งเตือนถ้า DD > 30%
+  dca_multiplier: 1.0                   # Fixed spacing (Dynamic = body)
+  dca_max_cap_usd: 50000.0              # เพดาน $50K (ตาเล็ก)
+  dca_size_mode: "martingale"           # ทบ x2 ทุก DCA ไม้!
+  short_timeout_minutes: 120
+  long_timeout_minutes: 30
+  monitor_interval_minutes: 5
+  cooldown_minutes: 5
+  funding_rate_per_8h: 0.01
