@@ -4,7 +4,7 @@ strategy:
   type: "crypto_futures"
   timeframe: "1m"
   initial_capital: 10000.0          # ทุนเริ่มต้น (USD)
-  leverage: 20                      # Leverage 20x (Futures)
+  leverage: 3                       # Leverage 3x (Futures)
   size_per_trade_usd: 100.0         # ขนาดไม้ละ (USD) - FIXED
   max_positions: 1                  # เปิดพร้อมกันได้สูงสุด
 
