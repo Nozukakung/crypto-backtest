@@ -217,46 +217,40 @@ def run_backtest(symbol, cfg=None):
                     }
 
             # 4) DCA Check
+            # อัปเดต liquidation price หลัง DCA
             if position.check_dca_trigger(low if side == "LONG" else high):
                 dca_price = maker_price(price, side, offset_pct)
-                result = position.add_trade(ts, "DCA", dca_price, size_per_trade, fee_rate)
-                if result is not None:  # ❗ min_notional check
-                    position.update_liquidation_price()
-                    active_order = {
-                        "price": position.take_profit_price,
-                        "side": "SELL" if side == "LONG" else "BUY",
-                        "is_tp": True,
-                    }
+                position.add_trade(ts, "DCA", dca_price, size_per_trade, fee_rate)
+                position.update_liquidation_price()
+                active_order = {
+                    "price": position.take_profit_price,
+                    "side": "SELL" if side == "LONG" else "BUY",
+                    "is_tp": True,
+                }
 
             # 5) Order Loop ทุก 1 นาที
             if active_order and not active_order.get("is_tp"):
                 order_p = active_order["price"]
                 if side == "LONG":
                     if low <= order_p:
-                        result = position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
-                        if result is not None:
-                            position.update_liquidation_price()
-                            active_order = {
-                                "price": position.take_profit_price,
-                                "side": "SELL",
-                                "is_tp": True,
-                            }
-                        else:
-                            active_order = None
+                        position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
+                        position.update_liquidation_price()
+                        active_order = {
+                            "price": position.take_profit_price,
+                            "side": "SELL",
+                            "is_tp": True,
+                        }
                     else:
                         active_order = None
                 else:
                     if high >= order_p:
-                        result = position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
-                        if result is not None:
-                            position.update_liquidation_price()
-                            active_order = {
-                                "price": position.take_profit_price,
-                                "side": "BUY",
-                                "is_tp": True,
-                            }
-                        else:
-                            active_order = None
+                        position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
+                        position.update_liquidation_price()
+                        active_order = {
+                            "price": position.take_profit_price,
+                            "side": "BUY",
+                            "is_tp": True,
+                        }
                     else:
                         active_order = None
 
@@ -269,17 +263,13 @@ def run_backtest(symbol, cfg=None):
             order_price = maker_price(price, "LONG", offset_pct)
             if low <= order_price:
                 pos = Position(symbol, "LONG", size_per_trade, position_cfg)
-                result = pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
-                if result is not None:
-                    position = pos
-                    active_order = {
-                        "price": position.take_profit_price,
-                        "side": "SELL",
-                        "is_tp": True,
-                    }
-                else:
-                    position = None
-                    active_order = None
+                pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
+                position = pos
+                active_order = {
+                    "price": position.take_profit_price,
+                    "side": "SELL",
+                    "is_tp": True,
+                }
             else:
                 active_order = {
                     "price": order_price,
@@ -292,17 +282,13 @@ def run_backtest(symbol, cfg=None):
             order_price = maker_price(price, "SHORT", offset_pct)
             if high >= order_price:
                 pos = Position(symbol, "SHORT", size_per_trade, position_cfg)
-                result = pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
-                if result is not None:
-                    position = pos
-                    active_order = {
-                        "price": position.take_profit_price,
-                        "side": "BUY",
-                        "is_tp": True,
-                    }
-                else:
-                    position = None
-                    active_order = None
+                pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
+                position = pos
+                active_order = {
+                    "price": position.take_profit_price,
+                    "side": "BUY",
+                    "is_tp": True,
+                }
             else:
                 active_order = {
                     "price": order_price,

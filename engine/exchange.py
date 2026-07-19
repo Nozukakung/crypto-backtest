@@ -90,26 +90,15 @@ def calculate_qty_for_notional(
     """
     คำนวณจำนวนที่สั่งให้ตรงกับ notional_usd พอดี
     โดยปัดเศษตาม qty_precision ของ Exchange
-    คืน None ถ้าตํ่ากว่า min_notional
     """
     info = get_symbol_info(symbol)
-
-    # ❗ เช็ค min_notional ก่อน!
-    if notional_usd < info.min_notional:
-        return None
-
     raw_qty = notional_usd / price
     rounded_qty = round_to_precision(raw_qty, info.qty_precision)
-
+    
     # ตรวจสอบ min_qty
     if rounded_qty < info.min_qty:
         rounded_qty = info.min_qty
-
-    # ตรวจสอบ min_notional อีกรอบ (หลังปัด qty แล้ว)
-    actual_notional = rounded_qty * price
-    if actual_notional < info.min_notional:
-        return None
-
+    
     return rounded_qty
 
 
