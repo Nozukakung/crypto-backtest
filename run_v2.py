@@ -5,7 +5,7 @@ from backtest.runner import run_backtest, load_config
 from analytics.report import generate_html_report
 
 cfg = load_config()
-symbols = ["BTCUSDT", "DOGEUSDT"]
+symbols = ["BTCUSDT", "DOGEUSDT", "BNBUSDT", "ETHUSDT"]
 
 for sym in symbols:
     try:

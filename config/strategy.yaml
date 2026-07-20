@@ -23,8 +23,9 @@ order:
   rebalance_interval_minutes: 1     # รีเฟรชทุก 1 นาที
 
 position:
+  stop_loss_percent: 0.0            # 0 = ปิด Stop Loss (ใช้เฉพาะ Liquidation)
   take_profit_above_bep_percent: 0.2    # TP = BEP + 0.2%
-  dca_trigger_below_bep_percent: 0.3    # DCA base distance 0.3%
+  dca_trigger_below_bep_percent: 1.0    # DCA base distance 1.0% (ห่างขึ้น)
   dca_multiplier: 1.0                  # Fixed (ไม่ใช่ Dynamic) = 0.3% ทุกไม้
   dca_max_cap_usd: 30000.0              # เพดานสูงสุดต่อคู่ (ลดจาก 50K)
   long_timeout_minutes: 30              # Long ค้าง 30 นาที → มัดรวม order
