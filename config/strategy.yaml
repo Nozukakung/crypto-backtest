@@ -1,38 +1,38 @@
-# config/strategy.yaml — พารามิเตอร์กลยุทธ์ทั้งหมด
+# config/strategy.yaml — พารามิเตอร์กลยุทธ์ (ตาเล็กจริงจากข่าว)
 strategy:
-  name: "Mean Reversion + DCA"
+  name: "Mean Reversion + DCA (ตาเล็กจริง)"
   type: "crypto_futures"
   timeframe: "1m"
   initial_capital: 10000.0          # ทุนเริ่มต้น (USD)
-  leverage: 3                       # Leverage 3x (Futures)
-  size_per_trade_usd: 100.0         # ขนาดไม้ละ (USD) - FIXED
+  leverage: 10                      # Leverage 10x (ตาเล็กจริง)
+  size_per_trade_usd: 200.0         # $200/ไม้ (ตาเล็กจริง)
   max_positions: 1                  # เปิดพร้อมกันได้สูงสุด
 
 signal:
   rsi_period: 14
-  rsi_long_threshold: 40.0          # RSI < 40 = ไป Long
-  rsi_short_threshold: 60.0         # RSI > 60 = ไป Short
-  max_consecutive_high: 5           # ไม่เปิด Long ถ้ามีแท่งเขียวติดกัน 5
-  avoid_touch_pattern: true         # ไม่เปิดถ้าเจอแพทเทิร์น "แตะ→แตะ→แตะ"
+  rsi_long_threshold: 35.0          # ลดอีก 5% (ตาเล็กปรับล่าสุด)
+  rsi_short_threshold: 65.0         # ลดอีก 5% (ตาเล็กปรับล่าสุด)
+  max_consecutive_high: 5
+  avoid_touch_pattern: true
 
 order:
   type: "limit"
-  price_offset_percent: 0.05        # ห่างจากราคา 0.05% (Maker)
-  fee_rate_maker: 0.02              # Maker fee (%)
-  fee_rate_taker: 0.045             # Taker fee (%)
-  rebalance_interval_minutes: 1     # รีเฟรชทุก 1 นาที
+  price_offset_percent: 0.05
+  fee_rate_maker: 0.02
+  fee_rate_taker: 0.045
+  rebalance_interval_minutes: 1
 
 position:
-  stop_loss_percent: 0.0            # 0 = ปิด Stop Loss (ใช้เฉพาะ Liquidation)
+  stop_loss_percent: 0.0            # ไม่มี SL
   take_profit_above_bep_percent: 0.2    # TP = BEP + 0.2%
-  dca_trigger_below_bep_percent: 1.0    # DCA base distance 1.0% (ห่างขึ้น)
-  dca_multiplier: 1.0                  # Fixed (ไม่ใช่ Dynamic) = 0.3% ทุกไม้
-  dca_max_cap_usd: 30000.0              # เพดานสูงสุดต่อคู่ (ลดจาก 50K)
-  long_timeout_minutes: 30              # Long ค้าง 30 นาที → มัดรวม order
-  short_timeout_minutes: 120            # Short ค้าง 120 นาที → มัดรวม order
-  cooldown_minutes: 5                   # cool down หลังปิด position
-  funding_rate_per_8h: 0.01             # จำลอง funding rate ทุก 8 ชม.
+  dca_trigger_below_bep_percent: 0.3    # DCA 0.3% (สูตรเดิม)
+  dca_multiplier: 1.0
+  dca_max_cap_usd: 20000.0              # Cap $20K (ตาเล็กใช้ $20K)
+  long_timeout_minutes: 30
+  short_timeout_minutes: 120
+  cooldown_minutes: 5
+  funding_rate_per_8h: 0.01
 
 risk:
-  max_position_per_pair: 50000.0        # Max position cap
-  max_drawdown_alert_percent: 30.0      # แจ้งเตือนถ้า DD > 30%
+  max_position_per_pair: 20000.0
+  max_drawdown_alert_percent: 30.0
