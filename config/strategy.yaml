@@ -5,7 +5,7 @@ strategy:
   timeframe: "1m"
   initial_capital: 10000.0          # ทุนเริ่มต้น (USD)
   leverage: 10                      # Leverage 10x (ตาเล็กจริง)
-  size_per_trade_usd: 200.0         # $200/ไม้ (ตาเล็กจริง)
+  size_per_trade_usd: 100.0         # $100/ไม้ (ทดสอบเปลี่ยนเป็น $100)
   max_positions: 1                  # เปิดพร้อมกันได้สูงสุด
 
 signal:
