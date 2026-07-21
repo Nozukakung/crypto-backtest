@@ -27,12 +27,12 @@ position:
   take_profit_above_bep_percent: 0.2
   dca_trigger_below_bep_percent: 0.3
   dca_multiplier: 1.0
-  dca_max_cap_usd: 20000.0
+  dca_max_cap_usd: 30000.0
   long_timeout_minutes: 30
   short_timeout_minutes: 120
   cooldown_minutes: 5
   funding_rate_per_8h: 0.01
 
 risk:
-  max_position_per_pair: 20000.0
+  max_position_per_pair: 30000.0
   max_drawdown_alert_percent: 30.0
