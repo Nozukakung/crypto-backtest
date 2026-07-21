@@ -1,33 +1,33 @@
-# config/strategy.yaml — พารามิเตอร์กลยุทธ์ (ตาเล็กจริงจากข่าว)
+# config/strategy.yaml — พารามิเตอร์กลยุทธ์ (ตาเล็กจริง Maker)
 strategy:
-  name: "Mean Reversion + DCA (ตาเล็กจริง)"
+  name: "Mean Reversion + DCA (ตาเล็กจริง Maker)"
   type: "crypto_futures"
   timeframe: "1m"
-  initial_capital: 10000.0          # ทุนเริ่มต้น (USD)
-  leverage: 10                      # Leverage 10x (ตาเล็กจริง)
-  size_per_trade_usd: 100.0         # $100/ไม้ (ทดสอบเปลี่ยนเป็น $100)
-  max_positions: 1                  # เปิดพร้อมกันได้สูงสุด
+  initial_capital: 10000.0
+  leverage: 10
+  size_per_trade_usd: 100.0
+  max_positions: 1
 
 signal:
   rsi_period: 14
-  rsi_long_threshold: 35.0          # ลดอีก 5% (ตาเล็กปรับล่าสุด)
-  rsi_short_threshold: 65.0         # ลดอีก 5% (ตาเล็กปรับล่าสุด)
+  rsi_long_threshold: 35.0
+  rsi_short_threshold: 65.0
   max_consecutive_high: 5
   avoid_touch_pattern: true
 
 order:
-  type: "limit"
-  price_offset_percent: 0.05
-  fee_rate_maker: 0.02
+  type: "limit"                     # Maker (Limit Order ดักคิว)
+  price_offset_percent: 0.05        # วางห่าง 0.05%
+  fee_rate_maker: 0.02              # 0.02% ประหยัดสุด
   fee_rate_taker: 0.045
   rebalance_interval_minutes: 1
 
 position:
-  stop_loss_percent: 0.0            # ไม่มี SL
-  take_profit_above_bep_percent: 0.2    # TP = BEP + 0.2%
-  dca_trigger_below_bep_percent: 0.3    # DCA 0.3% (สูตรเดิม)
+  stop_loss_percent: 0.0
+  take_profit_above_bep_percent: 0.2
+  dca_trigger_below_bep_percent: 0.3
   dca_multiplier: 1.0
-  dca_max_cap_usd: 20000.0              # Cap $20K (ตาเล็กใช้ $20K)
+  dca_max_cap_usd: 20000.0
   long_timeout_minutes: 30
   short_timeout_minutes: 120
   cooldown_minutes: 5
