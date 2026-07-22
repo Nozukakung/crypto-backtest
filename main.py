@@ -2,7 +2,6 @@
 """
 main.py — Entry Point: รัน Backtest สำหรับทุก Symbol
 """
-import sys
 import pandas as pd
 import numpy as np
 from pathlib import Path

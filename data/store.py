@@ -2,9 +2,7 @@
 data/store.py — โหลด CSV OHLC 1m → Parquet + Validate
 """
 import pandas as pd
-import numpy as np
 from pathlib import Path
-from datetime import datetime
 
 
 DATA_DIR = Path(__file__).parent.parent / "data" / "parquet"

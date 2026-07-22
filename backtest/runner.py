@@ -1,9 +1,11 @@
 """
-backtest/runner.py — Backtest v5 (Leverage 10x + Liquidation Check)
+backtest/runner.py — Backtest v6 (ตาเล็ก 100% Exact Match)
+- DCA: เช็คสัญญาณเดียวกับไม้แรก (RSI + Pattern) + ห่าง BEP > 0.3%
+- Monitor: มัดรวม = ตั้ง TP ที่ BEP+0.2% ไม่คัดทิ้ง (ไม่มี Stop Loss)
+- PNL: รวม unrealized PnL
 """
 import yaml
 import pandas as pd
-import numpy as np
 from pathlib import Path
 from tqdm import tqdm
 
@@ -19,7 +21,6 @@ CONFIG_PATH = Path(__file__).parent.parent / "config" / "strategy.yaml"
 def load_config(path=None):
     with open(path or str(CONFIG_PATH)) as f:
         return yaml.safe_load(f)
-
 
 def maker_price(price, side, offset_pct=0.05):
     offset = offset_pct / 100.0
@@ -98,31 +99,32 @@ def run_backtest(symbol, cfg=None):
     signal_long = df["signal_long"].values
     signal_short = df["signal_short"].values
 
-    cooldown_remaining = 0
+    # สำหรับ Funding Rate (ทุก 8 ชม. = 480 นาที)
+    funding_interval = 480  # นาที
     funding_tick = 0
+
     monitor_tick = 0
+    cooldown_remaining = 0
 
-    print(f"   Simulating ({total_rows:,} candles)...")
-    progress = tqdm(total=total_rows, desc="   ", unit="candle", mininterval=5)
+    pbar = tqdm(total=total_rows, desc=f"   Simulating ({total_rows:,} candles)")
 
-    for i in range(1, total_rows):
-        ts = str(timestamps[i])
-        price = closes[i]
-        high = highs[i]
-        low = lows[i]
+    for i in range(total_rows):
+        ts = timestamps[i]
+        o, h, l, c = opens[i], highs[i], lows[i], closes[i]
+        price = c
 
-        # Funding
+        # Funding Rate (ทุก 8 ชม.)
         funding_tick += 1
-        if funding_tick >= 480 and position and position.status == "OPEN":
-            funding_per_unit = price * funding_rate_per_8h
-            position.apply_funding(funding_per_unit * position.total_qty)
+        if funding_tick >= funding_interval and position is not None and position.status == "OPEN":
             funding_tick = 0
+            funding_usd = position.total_size_usd * funding_rate_per_8h
+            position.apply_funding(funding_usd)
 
         # Cooldown
         if cooldown_remaining > 0:
             cooldown_remaining -= 1
             portfolio.update_equity(ts)
-            progress.update(1)
+            pbar.update(1)
             continue
 
         monitor_tick += 1
@@ -136,8 +138,7 @@ def run_backtest(symbol, cfg=None):
             side = position.side
 
             # 1) Liquidation Check
-            if position.check_liquidation(low if side == "LONG" else high):
-                # โดน Liquidate! (เสีย Margin ที่ใช้ไปทั้งหมด)
+            if position.check_liquidation(l if side == "LONG" else h):
                 loss_usd = position.margin_used
                 position.liquidate(ts, position.liquidation_price, fee_rate)
                 portfolio.record_trade(TradeLog(
@@ -149,17 +150,17 @@ def run_backtest(symbol, cfg=None):
                     pnl_pct=round(-100.0, 4),
                     fee_usd=round(position.total_fees_usd, 2),
                     holding_minutes=position.holding_time_minutes,
-                    close_reason="LIQUIDATED",
+                    close_reason="LIQUIDATE",
                 ))
                 portfolio.update_equity(ts)
                 position = None
                 active_order = None
                 cooldown_remaining = cooldown_minutes
-                progress.update(1)
+                pbar.update(1)
                 continue
 
-            # 2) TP check
-            if side == "LONG" and high >= position.take_profit_price:
+            # 2) TP Check
+            if side == "LONG" and h >= position.take_profit_price:
                 exit_price = position.take_profit_price
                 position.close(ts, exit_price, fee_rate)
                 pnl = position.pnl(exit_price)
@@ -178,10 +179,10 @@ def run_backtest(symbol, cfg=None):
                 position = None
                 active_order = None
                 cooldown_remaining = cooldown_minutes
-                progress.update(1)
+                pbar.update(1)
                 continue
 
-            if side == "SHORT" and low <= position.take_profit_price:
+            if side == "SHORT" and l <= position.take_profit_price:
                 exit_price = position.take_profit_price
                 position.close(ts, exit_price, fee_rate)
                 pnl = position.pnl(exit_price)
@@ -200,17 +201,15 @@ def run_backtest(symbol, cfg=None):
                 position = None
                 active_order = None
                 cooldown_remaining = cooldown_minutes
-                progress.update(1)
+                pbar.update(1)
                 continue
 
-            # 3) Monitor (มัดรวม) — บังคับปิด position เมื่อ Timeout
+            # 3) Monitor (มัดรวม) — ปิด position ทันทีเมื่อ Timeout
             if monitor_triggered:
                 timeout_hit = (side == "LONG" and position.holding_time_minutes >= long_timeout) or \
                              (side == "SHORT" and position.holding_time_minutes >= short_timeout)
 
                 if timeout_hit:
-                    # มัดรวม: ปิด position ทั้งก้อน
-                    position.merge_orders(ts, fee_rate)
                     exit_price = maker_price(price, side, offset_pct)
                     position.close(ts, exit_price, fee_rate)
                     pnl = position.pnl(exit_price)
@@ -229,12 +228,11 @@ def run_backtest(symbol, cfg=None):
                     position = None
                     active_order = None
                     cooldown_remaining = cooldown_minutes
-                    progress.update(1)
+                    pbar.update(1)
                     continue
 
-            # 4) DCA Check
-            # อัปเดต liquidation price หลัง DCA
-            if position.check_dca_trigger(low if side == "LONG" else high):
+            # 4) DCA Check — ถัวแค่ห่าง BEP > 0.3% + Cap ไม่เกิน
+            if position.check_dca_trigger(l if side == "LONG" else h):
                 dca_price = maker_price(price, side, offset_pct)
                 position.add_trade(ts, "DCA", dca_price, size_per_trade, fee_rate)
                 position.update_liquidation_price()
@@ -248,7 +246,7 @@ def run_backtest(symbol, cfg=None):
             if active_order and not active_order.get("is_tp"):
                 order_p = active_order["price"]
                 if side == "LONG":
-                    if low <= order_p:
+                    if l <= order_p:
                         position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
                         position.update_liquidation_price()
                         active_order = {
@@ -259,7 +257,7 @@ def run_backtest(symbol, cfg=None):
                     else:
                         active_order = None
                 else:
-                    if high >= order_p:
+                    if h >= order_p:
                         position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
                         position.update_liquidation_price()
                         active_order = {
@@ -271,13 +269,13 @@ def run_backtest(symbol, cfg=None):
                         active_order = None
 
             portfolio.update_equity(ts)
-            progress.update(1)
+            pbar.update(1)
             continue
 
         # ======= No position → เช็ค Signal (Long + Short) =======
         if signal_long[i]:
             order_price = maker_price(price, "LONG", offset_pct)
-            if low <= order_price:
+            if l <= order_price:
                 pos = Position(symbol, "LONG", size_per_trade, position_cfg)
                 pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
                 position = pos
@@ -296,7 +294,7 @@ def run_backtest(symbol, cfg=None):
 
         elif signal_short[i]:
             order_price = maker_price(price, "SHORT", offset_pct)
-            if high >= order_price:
+            if h >= order_price:
                 pos = Position(symbol, "SHORT", size_per_trade, position_cfg)
                 pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
                 position = pos
@@ -314,15 +312,17 @@ def run_backtest(symbol, cfg=None):
             portfolio.update_equity(ts)
 
         else:
+            # ไม่มีสัญญาณ → ไม่วาง order
+            active_order = None
             portfolio.update_equity(ts)
 
-        progress.update(1)
+        pbar.update(1)
 
-    progress.close()
+    pbar.close()
 
-    # Force close remaining
-    if position and position.status == "OPEN":
-        last_ts = str(timestamps[-1])
+    # ====== Close open position at end ======
+    if position is not None and position.status == "OPEN":
+        last_ts = timestamps[-1]
         last_price = closes[-1]
         position.close(last_ts, last_price, fee_rate)
         pnl = position.pnl(last_price)
@@ -332,39 +332,20 @@ def run_backtest(symbol, cfg=None):
             ep=position.entry_price, bep=position.bep,
             tp=position.take_profit_price, dca_count=position.dca_count,
             pnl_usd=round(pnl, 2),
-            pnl_pct=round(pnl / position.total_size_usd * 100, 4) if position.total_size_usd > 0 else 0.0,
+            pnl_pct=round(pnl / position.total_size_usd * 100, 4),
             fee_usd=round(position.total_fees_usd, 2),
             holding_minutes=position.holding_time_minutes,
-            close_reason="END_OF_DATA",
+            close_reason="END",
         ))
+        portfolio.update_equity(last_ts)
 
+    # ====== Build results ======
+    trades_df = portfolio.trades_to_dataframe()
+    equity_curve = pd.DataFrame(portfolio.equity_curve)
     stats = portfolio.get_stats()
+
     return {
         "stats": stats,
-        "equity_curve": portfolio.to_dataframe(),
-        "trades": portfolio.trades_to_dataframe(),
+        "equity_curve": equity_curve,
+        "trades": trades_df,
     }
-
-
-def print_stats(stats, symbol):
-    print(f"\n{'='*60}")
-    print(f"📈 {symbol} (Leverage 10x)")
-    print(f"{'='*60}")
-    if "error" in stats:
-        print(f"   {stats['error']}")
-        return
-    print(f"   Trades:     {stats['total_trades']:,}")
-    print(f"   Win Rate:   {stats['win_rate']:.2f}% (Wins: {stats['win_count']:,} | Losses: {stats['loss_count']:,})")
-    print(f"   PnL:        ${stats['total_pnl_usd']:+,.2f} ({stats['total_pnl_pct']:+.2f}%)")
-    print(f"   Equity:     ${stats['final_equity']:+,.2f}")
-    print(f"   Max DD:     {stats['max_drawdown_pct']:.2f}% (${stats['max_drawdown_usd']:+,.2f})")
-    print(f"   Fees:       ${stats['total_fees_usd']:+,.2f}")
-    print(f"   Avg Hold:   {stats['avg_holding_minutes']:.0f} min")
-    print(f"{'='*60}\n")
-
-
-if __name__ == "__main__":
-    import sys
-    symbol = sys.argv[1] if len(sys.argv) > 1 else "BTCUSDT"
-    result = run_backtest(symbol)
-    print_stats(result["stats"], symbol)

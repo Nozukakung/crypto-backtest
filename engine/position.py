@@ -3,7 +3,7 @@ engine/position.py — Position Manager v7 (Exchange Precision Rules)
 """
 from dataclasses import dataclass
 from typing import List
-from engine.exchange import round_price, calculate_qty_for_notional, calculate_actual_notional, get_symbol_info
+from engine.exchange import round_price, calculate_qty_for_notional, calculate_actual_notional
 
 
 @dataclass
@@ -124,12 +124,6 @@ class Position:
             pct_above = (current_price - self.bep) / self.bep
             return pct_above > self.current_dca_distance_pct
 
-    def check_tp_trigger(self, current_price):
-        if self.side == "LONG":
-            return current_price >= self.take_profit_price
-        else:
-            return current_price <= self.take_profit_price
-
     def update_liquidation_price(self):
         if self.side == "LONG":
             liq = self.entry_price * (1.0 - 1.0 / self.leverage)
@@ -144,12 +138,6 @@ class Position:
             return current_price <= self.liquidation_price
         else:
             return current_price >= self.liquidation_price
-
-    def unrealized_pnl(self, current_price):
-        if self.side == "LONG":
-            return (current_price - self.entry_price) * self.total_qty - self.total_fees_usd - self.total_funding_usd
-        else:
-            return (self.entry_price - current_price) * self.total_qty - self.total_fees_usd - self.total_funding_usd
 
     def close(self, timestamp, exit_price, fee_rate):
         self.status = "CLOSED"
@@ -182,6 +170,3 @@ class Position:
             gross = (self.entry_price - exit_price) * self.total_qty
         return gross - self.total_fees_usd - self.total_funding_usd
 
-    def merge_orders(self, timestamp, fee_rate):
-        self.merged_orders = True
-        return True
