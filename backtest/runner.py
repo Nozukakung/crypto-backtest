@@ -203,18 +203,34 @@ def run_backtest(symbol, cfg=None):
                 progress.update(1)
                 continue
 
-            # 3) Monitor (มัดรวม)
+            # 3) Monitor (มัดรวม) — บังคับปิด position เมื่อ Timeout
             if monitor_triggered:
                 timeout_hit = (side == "LONG" and position.holding_time_minutes >= long_timeout) or \
                              (side == "SHORT" and position.holding_time_minutes >= short_timeout)
 
                 if timeout_hit:
+                    # มัดรวม: ปิด position ทั้งก้อน
                     position.merge_orders(ts, fee_rate)
-                    active_order = {
-                        "price": position.take_profit_price,
-                        "side": "SELL" if side == "LONG" else "BUY",
-                        "is_tp": True,
-                    }
+                    exit_price = maker_price(price, side, offset_pct)
+                    position.close(ts, exit_price, fee_rate)
+                    pnl = position.pnl(exit_price)
+                    portfolio.record_trade(TradeLog(
+                        symbol=symbol, side=side,
+                        open_time=position.records[0].timestamp, close_time=ts,
+                        ep=position.entry_price, bep=position.bep,
+                        tp=position.take_profit_price, dca_count=position.dca_count,
+                        pnl_usd=round(pnl, 2),
+                        pnl_pct=round(pnl / position.total_size_usd * 100, 4),
+                        fee_usd=round(position.total_fees_usd, 2),
+                        holding_minutes=position.holding_time_minutes,
+                        close_reason="TIMEOUT",
+                    ))
+                    portfolio.update_equity(ts)
+                    position = None
+                    active_order = None
+                    cooldown_remaining = cooldown_minutes
+                    progress.update(1)
+                    continue
 
             # 4) DCA Check
             # อัปเดต liquidation price หลัง DCA

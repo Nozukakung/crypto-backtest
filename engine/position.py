@@ -108,7 +108,9 @@ class Position:
         return self.dca_base_distance_pct * (self.dca_multiplier ** self.dca_count)
 
     def check_dca_trigger(self, current_price):
-        if self.total_size_usd + self.initial_size_usd > self.dca_max_cap_usd:
+        # ตรวจสอบ Cap: total_size_usd รวมไม้แรกอยู่แล้ว
+        # ใช้ >= ป้องกันทะลุ Cap
+        if self.total_size_usd >= self.dca_max_cap_usd:
             return False
 
         if self.side == "LONG":
