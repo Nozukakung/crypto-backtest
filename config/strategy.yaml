@@ -18,12 +18,15 @@ order:
   fee_rate_maker: 0.02
   fee_rate_taker: 0.045
 
+  take_profit_above_bep_percent: 0.2   # TP 0.2%
+
 position:
   dca_trigger_below_bep_percent: 0.3
   dca_multiplier: 1.0
-  dca_max_cap_usd: 50000.0         # Cap $50K ตามตาเล็ก
-  long_timeout_minutes: 9999999
-  short_timeout_minutes: 9999999
+  dca_max_cap_usd: 50000.0         # Cap $50K (margin $5,000 ที่ 10x)
+  long_timeout_minutes: 30          # LONG: หยุดถัว 30 นาที (มัดรวม)
+  short_timeout_minutes: 120        # SHORT: หยุดถัว 120 นาที (มัดรวม)
+  cutloss_after_stop_minutes: 9999999  # ปิด Cut Loss (ไม่ตัดขาดทุน)
   monitor_interval_minutes: 5
   cooldown_minutes: 5
   funding_rate_per_8h: 0.01

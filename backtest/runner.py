@@ -54,6 +54,7 @@ def run_backtest(symbol, cfg=None):
     long_timeout = position_cfg.get("long_timeout_minutes", 30)
     short_timeout = position_cfg.get("short_timeout_minutes", 120)
     monitor_interval = position_cfg.get("monitor_interval_minutes", 5)
+    cutloss_minutes = position_cfg.get("cutloss_after_stop_minutes", 4320)  # 3 วัน
     funding_rate_per_8h = position_cfg.get("funding_rate_per_8h", 0.01) / 100.0
 
     print(f"🔄 Loading {symbol}...")
@@ -129,7 +130,7 @@ def run_backtest(symbol, cfg=None):
             side = position.side
 
             # 1) Liquidation Check
-            if position.check_liquidation(l if side == "LONG" else h):
+            if position.check_liquidation(l if side == "LONG" else h, portfolio.capital):
                 loss_usd = position.margin_used
                 position.liquidate(ts, position.liquidation_price, fee_rate)
                 portfolio.record_trade(TradeLog(
@@ -195,35 +196,56 @@ def run_backtest(symbol, cfg=None):
                 pbar.update(1)
                 continue
 
-            # 3) Monitor (มัดรวม) — ปิด position ทันทีเมื่อ Timeout
+            # 3) Monitor (มัดรวม & Cut Loss)
+            # Timeout (LONG 30 นาที, SHORT 120 นาที) -> หยุด DCA ทันที
+            # หลังหยุด DCA (ไม่ว่าจะเพราะ Timeout หรือชน Cap) -> ถ้าเกิน 24 ชม. (1440 นาที) ยังไม่ TP -> Cut Loss
             if monitor_triggered:
+                # 3.1) เช็ค Timeout
                 timeout_hit = (side == "LONG" and position.holding_time_minutes >= long_timeout) or \
                              (side == "SHORT" and position.holding_time_minutes >= short_timeout)
 
-                if timeout_hit:
-                    exit_price = maker_price(price, side, offset_pct)
-                    position.close(ts, exit_price, fee_rate)
-                    pnl = position.pnl(exit_price)
-                    portfolio.record_trade(TradeLog(
-                        symbol=symbol, side=side,
-                        open_time=position.records[0].timestamp, close_time=ts,
-                        ep=position.entry_price, bep=position.bep,
-                        tp=position.take_profit_price, dca_count=position.dca_count,
-                        pnl_usd=round(pnl, 2),
-                        pnl_pct=round(pnl / position.total_size_usd * 100, 4),
-                        fee_usd=round(position.total_fees_usd, 2),
-                        holding_minutes=position.holding_time_minutes,
-                        close_reason="TIMEOUT",
-                    ))
-                    portfolio.update_equity(ts)
-                    position = None
-                    active_order = None
-                    cooldown_remaining = cooldown_minutes
-                    pbar.update(1)
-                    continue
+                if timeout_hit and not position.dca_disabled:
+                    position.dca_disabled = True
+                    position.dca_disabled_at = ts
+
+                # 3.2) เช็คชน Cap (ถ้าชน Cap ก็ให้ dca_disabled_at เริ่มทำงานถ้ายังไม่มีค่า)
+                if position.total_size_usd >= max_cap and position.dca_disabled_at is None:
+                    position.dca_disabled = True
+                    position.dca_disabled_at = ts
+
+                # 3.3) Cut Loss: เช็คเวลาหลังหยุดถัว เกิน 24 ชม. (1440 นาที) หรือไม่
+                if position.dca_disabled and position.dca_disabled_at is not None:
+                    # คำนวณความต่างเวลา (เนื่องจาก timestamp เป็น string/datetime เราใช้ holding_minutes หลังหยุดถัวเทียบง่ายกว่า)
+                    # โดย dca_disabled_at เกิดที่ holding_minutes เท่าไหร่ -> ถ้าห่างเกิน 1440 นาที -> Cut Loss
+                    # เพื่อความเป๊ะ เราบันทึกเวลาหยุดถัวโดยใช้ holding_minutes เป็นเกณฑ์
+                    if not hasattr(position, "dca_disabled_at_minutes") or position.dca_disabled_at_minutes is None:
+                        position.dca_disabled_at_minutes = position.holding_time_minutes
+
+                    time_since_stop_dca = position.holding_time_minutes - position.dca_disabled_at_minutes
+                    if time_since_stop_dca >= cutloss_minutes:  # Cut Loss
+                        exit_price = maker_price(price, side, offset_pct)
+                        position.close(ts, exit_price, fee_rate)
+                        pnl = position.pnl(exit_price)
+                        portfolio.record_trade(TradeLog(
+                            symbol=symbol, side=side,
+                            open_time=position.records[0].timestamp, close_time=ts,
+                            ep=position.entry_price, bep=position.bep,
+                            tp=position.take_profit_price, dca_count=position.dca_count,
+                            pnl_usd=round(pnl, 2),
+                            pnl_pct=round(pnl / position.total_size_usd * 100, 4),
+                            fee_usd=round(position.total_fees_usd, 2),
+                            holding_minutes=position.holding_time_minutes,
+                            close_reason="CUTLOSS",
+                        ))
+                        portfolio.update_equity(ts)
+                        position = None
+                        active_order = None
+                        cooldown_remaining = cooldown_minutes
+                        pbar.update(1)
+                        continue
 
             # 4) DCA Check — ถัวแค่ห่าง BEP > 0.3% + Cap ไม่เกิน
-            if position.check_dca_trigger(l if side == "LONG" else h):
+            if position.check_dca_trigger(l if side == "LONG" else h, portfolio.capital):
                 dca_price = maker_price(price, side, offset_pct)
                 position.add_trade(ts, "DCA", dca_price, size_per_trade, fee_rate)
                 position.update_liquidation_price(portfolio.capital)
@@ -233,80 +255,74 @@ def run_backtest(symbol, cfg=None):
                     "is_tp": True,
                 }
 
-            # 5) Order Loop ทุก 1 นาที
-            if active_order and not active_order.get("is_tp"):
-                order_p = active_order["price"]
-                if side == "LONG":
-                    if l <= order_p:
-                        position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
-                        position.update_liquidation_price(portfolio.capital)
-                        active_order = {
-                            "price": position.take_profit_price,
-                            "side": "SELL",
-                            "is_tp": True,
-                        }
-                    else:
-                        active_order = None
-                else:
-                    if h >= order_p:
-                        position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
-                        position.update_liquidation_price(portfolio.capital)
-                        active_order = {
-                            "price": position.take_profit_price,
-                            "side": "BUY",
-                            "is_tp": True,
-                        }
-                    else:
-                        active_order = None
-
             portfolio.update_equity(ts)
             pbar.update(1)
             continue
 
+        # ======= Order Loop: จับคู่ Limit Order แรก (ไม่มี position ก็ทำงานได้) =======
+        # ข้ามบล็อกนี้ถ้ามี pending order (ให้สัญญาณใหม่ทับได้เลย)
+
         # ======= No position → เช็ค Signal (Long + Short) =======
-        if signal_long[i]:
-            order_price = maker_price(price, "LONG", offset_pct)
-            if l <= order_price:
-                pos = Position(symbol, "LONG", size_per_trade, position_cfg)
-                pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
-                pos.update_liquidation_price(portfolio.capital)
-                position = pos
-                active_order = {
-                    "price": position.take_profit_price,
-                    "side": "SELL",
-                    "is_tp": True,
-                }
+        # กฎ: ถ้า active_order ยัง pending อยู่ (is_tp=False) ห้ามทับ!
+        # ปล่อยให้มันรอจนกว่า 10 นาที จะถูก cancel โดย stale logic หรือราคาชน
+        if signal_long[i] and not position:
+            # ถ้ามี pending order อยู่แล้ว → ข้าม ไม่ต้องตั้งใหม่
+            if active_order and not active_order.get("is_tp"):
+                pass
             else:
-                active_order = {
-                    "price": order_price,
-                    "side": "LONG",
-                    "is_tp": False,
-                }
+                order_price = maker_price(price, "LONG", offset_pct)
+                if l <= order_price:
+                    pos = Position(symbol, "LONG", size_per_trade, position_cfg)
+                    pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
+                    pos.update_liquidation_price(portfolio.capital)
+                    position = pos
+                    active_order = {
+                        "price": position.take_profit_price,
+                        "side": "SELL",
+                        "is_tp": True,
+                    }
+                else:
+                    active_order = {
+                        "price": order_price,
+                        "side": "LONG",
+                        "is_tp": False,
+                        "stale_count": 0,
+                    }
             portfolio.update_equity(ts)
 
-        elif signal_short[i]:
-            order_price = maker_price(price, "SHORT", offset_pct)
-            if h >= order_price:
-                pos = Position(symbol, "SHORT", size_per_trade, position_cfg)
-                pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
-                pos.update_liquidation_price(portfolio.capital)
-                position = pos
-                active_order = {
-                    "price": position.take_profit_price,
-                    "side": "BUY",
-                    "is_tp": True,
-                }
+        elif signal_short[i] and not position:
+            if active_order and not active_order.get("is_tp"):
+                pass
             else:
-                active_order = {
-                    "price": order_price,
-                    "side": "SHORT",
-                    "is_tp": False,
-                }
+                order_price = maker_price(price, "SHORT", offset_pct)
+                if h >= order_price:
+                    pos = Position(symbol, "SHORT", size_per_trade, position_cfg)
+                    pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
+                    pos.update_liquidation_price(portfolio.capital)
+                    position = pos
+                    active_order = {
+                        "price": position.take_profit_price,
+                        "side": "BUY",
+                        "is_tp": True,
+                    }
+                else:
+                    active_order = {
+                        "price": order_price,
+                        "side": "SHORT",
+                        "is_tp": False,
+                        "stale_count": 0,
+                    }
             portfolio.update_equity(ts)
 
         else:
-            # ไม่มีสัญญาณ → ไม่วาง order
-            active_order = None
+            # ไม่มีสัญญาณใหม่ → ถ้ามี pending order รองาน → นับอายุ
+            if active_order and not active_order.get("is_tp"):
+                active_order["stale_count"] = active_order.get("stale_count", 0) + 1
+                # ถ้าเกิน 10 นาที → ยกเลิก order
+                if active_order["stale_count"] >= 10:
+                    active_order = None
+            else:
+                active_order = None
             portfolio.update_equity(ts)
 
         pbar.update(1)
