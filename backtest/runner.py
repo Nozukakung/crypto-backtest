@@ -70,17 +70,8 @@ def run_backtest(symbol, cfg=None):
     rsi_long = signal_cfg.get("rsi_long_threshold", 40.0)
     rsi_short = signal_cfg.get("rsi_short_threshold", 60.0)
 
-    df["signal_long"] = (
-        (df["rsi"] < rsi_long) &
-        (~df["closes_at_low"]) &
-        (~df["consec_high_5"]) &
-        (~df["touch_pattern_3"])
-    )
-    df["signal_short"] = (
-        (df["rsi"] > rsi_short) &
-        (~df["consec_low_5"]) &
-        (~df["touch_pattern_3_low"])
-    )
+    df["signal_long"] = (df["rsi"] < rsi_long)
+    df["signal_short"] = (df["rsi"] > rsi_short)
 
     long_count = int(df["signal_long"].sum())
     short_count = int(df["signal_short"].sum())
@@ -235,7 +226,7 @@ def run_backtest(symbol, cfg=None):
             if position.check_dca_trigger(l if side == "LONG" else h):
                 dca_price = maker_price(price, side, offset_pct)
                 position.add_trade(ts, "DCA", dca_price, size_per_trade, fee_rate)
-                position.update_liquidation_price()
+                position.update_liquidation_price(portfolio.capital)
                 active_order = {
                     "price": position.take_profit_price,
                     "side": "SELL" if side == "LONG" else "BUY",
@@ -248,7 +239,7 @@ def run_backtest(symbol, cfg=None):
                 if side == "LONG":
                     if l <= order_p:
                         position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
-                        position.update_liquidation_price()
+                        position.update_liquidation_price(portfolio.capital)
                         active_order = {
                             "price": position.take_profit_price,
                             "side": "SELL",
@@ -259,7 +250,7 @@ def run_backtest(symbol, cfg=None):
                 else:
                     if h >= order_p:
                         position.add_trade(ts, "OPEN", order_p, size_per_trade, fee_rate)
-                        position.update_liquidation_price()
+                        position.update_liquidation_price(portfolio.capital)
                         active_order = {
                             "price": position.take_profit_price,
                             "side": "BUY",
@@ -278,6 +269,7 @@ def run_backtest(symbol, cfg=None):
             if l <= order_price:
                 pos = Position(symbol, "LONG", size_per_trade, position_cfg)
                 pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
+                pos.update_liquidation_price(portfolio.capital)
                 position = pos
                 active_order = {
                     "price": position.take_profit_price,
@@ -297,6 +289,7 @@ def run_backtest(symbol, cfg=None):
             if h >= order_price:
                 pos = Position(symbol, "SHORT", size_per_trade, position_cfg)
                 pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
+                pos.update_liquidation_price(portfolio.capital)
                 position = pos
                 active_order = {
                     "price": position.take_profit_price,

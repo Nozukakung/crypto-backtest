@@ -1,39 +1,33 @@
-# config/strategy.yaml — ตาเล็ก 100% Exact Match
+# config/strategy.yaml — ตาเล็กจริง RSI Only + พอร์ต $50K ค้ำ Cross Margin
 strategy:
-  name: "Mean Reversion + DCA (ตาเล็ก 100%)"
+  name: "Mean Reversion + DCA (ตาเล็ก RSI Only)"
   type: "crypto_futures"
   timeframe: "1m"
-  initial_capital: 10000.0
+  initial_capital: 50000.0          # พอร์ต $50K ตามตาเล็ก
   leverage: 10
-  size_per_trade_usd: 200.0
+  size_per_trade_usd: 200.0         # ไม้ละ $200
   max_positions: 1
 
 signal:
   rsi_period: 14
-  rsi_long_threshold: 35.0
-  rsi_short_threshold: 65.0
-  max_consecutive_high: 5
-  avoid_touch_pattern: true
+  rsi_long_threshold: 40.0         # ปล่อยกว้างขึ้น
+  rsi_short_threshold: 60.0        # ปล่อยกว้างขึ้น
 
 order:
-  type: "limit"
   price_offset_percent: 0.05
   fee_rate_maker: 0.02
   fee_rate_taker: 0.045
-  rebalance_interval_minutes: 1
 
 position:
-  stop_loss_percent: 0.0
-  take_profit_above_bep_percent: 0.2
   dca_trigger_below_bep_percent: 0.3
   dca_multiplier: 1.0
-  dca_max_cap_usd: 20000.0
-  long_timeout_minutes: 9999999        # ปิด Timeout (19 ปี)
-  short_timeout_minutes: 9999999       # ปิด Timeout (19 ปี)
+  dca_max_cap_usd: 50000.0         # Cap $50K ตามตาเล็ก
+  long_timeout_minutes: 9999999
+  short_timeout_minutes: 9999999
   monitor_interval_minutes: 5
   cooldown_minutes: 5
   funding_rate_per_8h: 0.01
 
 risk:
-  max_position_per_pair: 20000.0
+  max_position_per_pair: 50000.0
   max_drawdown_alert_percent: 30.0

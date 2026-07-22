@@ -124,11 +124,24 @@ class Position:
             pct_above = (current_price - self.bep) / self.bep
             return pct_above > self.current_dca_distance_pct
 
-    def update_liquidation_price(self):
-        if self.side == "LONG":
-            liq = self.entry_price * (1.0 - 1.0 / self.leverage)
+    def update_liquidation_price(self, portfolio_equity=0.0):
+        """Cross Margin Liquidation: Liq = entry ± (equity / qty)
+        ถ้า portfolio_equity = 0 → fallback เป็น Isolated Margin (เดิม)"""
+        if self.total_qty == 0:
+            return
+        if portfolio_equity > 0:
+            # Cross Margin: equity ทั้งพอร์ตค้ำ position นี้
+            margin_per_qty = portfolio_equity / self.total_qty
+            if self.side == "LONG":
+                liq = self.entry_price - margin_per_qty
+            else:
+                liq = self.entry_price + margin_per_qty
         else:
-            liq = self.entry_price * (1.0 + 1.0 / self.leverage)
+            # Fallback: Isolated Margin
+            if self.side == "LONG":
+                liq = self.entry_price * (1.0 - 1.0 / self.leverage)
+            else:
+                liq = self.entry_price * (1.0 + 1.0 / self.leverage)
         self.liquidation_price = round_price(self.symbol, liq)
 
     def check_liquidation(self, current_price):
