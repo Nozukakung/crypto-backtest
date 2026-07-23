@@ -3,6 +3,24 @@
 
 set -e
 
+# ตรวจจับว่ารันใน terminal หรือดับเบิลคลิกจาก GUI
+if [ -t 0 ]; then
+    # ถ้าเปิดจาก CLI/Terminal อยู่แล้ว: รันสคริปต์ปกติ
+    echo "Running inside an existing terminal..."
+else
+    # ถ้าดับเบิลคลิกเปิดจาก GUI: ให้เปิดหน้าต่าง Terminal ใหม่ขึ้นมาและรันตัวเอง
+    if command -v gnome-terminal &>/dev/null; then
+        exec gnome-terminal -- bash -c "$0; echo 'Press Enter to close...'; read"
+        exit 0
+    elif command -v konsole &>/dev/null; then
+        exec konsole -e bash -c "$0; echo 'Press Enter to close...'; read"
+        exit 0
+    elif command -v xterm &>/dev/null; then
+        exec xterm -e bash -c "$0; echo 'Press Enter to close...'; read"
+        exit 0
+    fi
+fi
+
 # โหลด nvm เพื่อใช้ Node v22
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
