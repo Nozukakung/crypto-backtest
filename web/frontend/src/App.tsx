@@ -31,11 +31,11 @@ function App() {
       .catch(err => console.error('Failed to load runs:', err))
   }, [])
 
-  // ดึง summary ของ Run ที่เลือก
+  // ดึง summary และ stats ของเหรียญที่เลือกใน Run ที่เลือก
   useEffect(() => {
-    if (!selectedRun) return
+    if (!selectedRun || !selectedSymbol) return
     setLoading(true)
-    fetch(`${API_URL}/runs/${selectedRun}`)
+    fetch(`${API_URL}/runs/${selectedRun}/stats/${selectedSymbol}`)
       .then(res => res.json())
       .then(data => {
         setSummary(data)
@@ -43,9 +43,19 @@ function App() {
       })
       .catch(err => {
         console.error(err)
-        setLoading(false)
+        // fallback ไปใช้ข้อมูล summary ทั่วไป
+        fetch(`${API_URL}/runs/${selectedRun}`)
+          .then(res => res.json())
+          .then(data => {
+            setSummary(data)
+            setLoading(false)
+          })
+          .catch(() => {
+            setSummary(null)
+            setLoading(false)
+          })
       })
-  }, [selectedRun])
+  }, [selectedRun, selectedSymbol])
 
   // ดึง trades ของเหรียญที่เลือก
   useEffect(() => {

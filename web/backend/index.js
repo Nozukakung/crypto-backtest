@@ -49,7 +49,24 @@ app.get('/api/runs', (req, res) => {
   }
 });
 
-// 2. ดึงรายละเอียดของ Run รายโฟลเดอร์
+// 2. ดึง stats รายเหรียญ (ใช้ตอนเปลี่ยน Symbol)
+app.get('/api/runs/:id/stats/:symbol', (req, res) => {
+  const { id, symbol } = req.params;
+  const statsPath = path.join(RESULTS_DIR, id, `${symbol}_stats.json`);
+
+  if (!fs.existsSync(statsPath)) {
+    return res.status(404).json({ error: `Stats for ${symbol} not found in run ${id}` });
+  }
+
+  try {
+    const stats = JSON.parse(fs.readFileSync(statsPath, 'utf8'));
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 3. ดึง summary ของ Run (ใช้ครั้งแรก)
 app.get('/api/runs/:id', (req, res) => {
   const { id } = req.params;
   const runPath = path.join(RESULTS_DIR, id);
@@ -59,22 +76,25 @@ app.get('/api/runs/:id', (req, res) => {
   }
 
   try {
+    // ลองหา BTCUSDT_stats.json ก่อน (fallback)
+    const btcPath = path.join(runPath, 'BTCUSDT_stats.json');
+    if (fs.existsSync(btcPath)) {
+      return res.json(JSON.parse(fs.readFileSync(btcPath, 'utf8')));
+    }
+    // fallback ไป summary.json
     const summaryPath = path.join(runPath, 'summary.json');
     if (!fs.existsSync(summaryPath)) {
       return res.status(404).json({ error: 'Summary data not found' });
     }
-
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
-    res.json(summary);
+    res.json(JSON.parse(fs.readFileSync(summaryPath, 'utf8')));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// 3. ดึง CSV Trades ของเหรียญใน Run นั้นๆ
+// 4. ดึง CSV Trades ของเหรียญใน Run นั้นๆ
 app.get('/api/runs/:id/trades/:symbol', (req, res) => {
   const { id, symbol } = req.params;
-  // เพื่อความยืดหยุ่น: support id = 'latest'
   const csvPath = path.join(RESULTS_DIR, id, `${symbol}_trades.csv`);
 
   if (!fs.existsSync(csvPath)) {
