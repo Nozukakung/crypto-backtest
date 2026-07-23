@@ -49,10 +49,11 @@ app.get('/api/runs', (req, res) => {
   }
 });
 
-// 2. ดึง stats รายเหรียญ (ใช้ตอนเปลี่ยน Symbol)
+// 2. ดึง stats รายเหรียญ (*** ต้องอยู่ก่อน /api/runs/:id ***)
 app.get('/api/runs/:id/stats/:symbol', (req, res) => {
   const { id, symbol } = req.params;
-  const statsPath = path.join(RESULTS_DIR, id, `${symbol}_stats.json`);
+  const targetId = id === 'latest' ? 'latest' : id;
+  const statsPath = path.join(RESULTS_DIR, targetId, `${symbol}_stats.json`);
 
   if (!fs.existsSync(statsPath)) {
     return res.status(404).json({ error: `Stats for ${symbol} not found in run ${id}` });
@@ -66,22 +67,21 @@ app.get('/api/runs/:id/stats/:symbol', (req, res) => {
   }
 });
 
-// 3. ดึง summary ของ Run (ใช้ครั้งแรก)
+// 3. ดึง summary ของ Run
 app.get('/api/runs/:id', (req, res) => {
   const { id } = req.params;
-  const runPath = path.join(RESULTS_DIR, id);
+  const targetId = id === 'latest' ? 'latest' : id;
+  const runPath = path.join(RESULTS_DIR, targetId);
 
   if (!fs.existsSync(runPath)) {
     return res.status(404).json({ error: 'Run not found' });
   }
 
   try {
-    // ลองหา BTCUSDT_stats.json ก่อน (fallback)
     const btcPath = path.join(runPath, 'BTCUSDT_stats.json');
     if (fs.existsSync(btcPath)) {
       return res.json(JSON.parse(fs.readFileSync(btcPath, 'utf8')));
     }
-    // fallback ไป summary.json
     const summaryPath = path.join(runPath, 'summary.json');
     if (!fs.existsSync(summaryPath)) {
       return res.status(404).json({ error: 'Summary data not found' });
@@ -95,7 +95,8 @@ app.get('/api/runs/:id', (req, res) => {
 // 4. ดึง CSV Trades ของเหรียญใน Run นั้นๆ
 app.get('/api/runs/:id/trades/:symbol', (req, res) => {
   const { id, symbol } = req.params;
-  const csvPath = path.join(RESULTS_DIR, id, `${symbol}_trades.csv`);
+  const targetId = id === 'latest' ? 'latest' : id;
+  const csvPath = path.join(RESULTS_DIR, targetId, `${symbol}_trades.csv`);
 
   if (!fs.existsSync(csvPath)) {
     return res.status(404).json({ error: `Trades CSV for ${symbol} not found` });

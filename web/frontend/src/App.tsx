@@ -21,7 +21,7 @@ function App() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('BTCUSDT')
   const [loading, setLoading] = useState<boolean>(false)
 
-  // ดึงรายการ Runs
+  // 1. ดึงรายการ Runs ทั้งหมดเมื่อโหลดหน้าครั้งแรก (ครั้งเดียว)
   useEffect(() => {
     fetch(`${API_URL}/runs`)
       .then(res => res.json())
@@ -31,47 +31,50 @@ function App() {
       .catch(err => console.error('Failed to load runs:', err))
   }, [])
 
-  // ดึง summary และ stats ของเหรียญที่เลือกใน Run ที่เลือก
+  // 2. ดึงข้อมูล Stats และ Trades ควบคู่กันเมื่อเลือก Run หรือ Symbol เปลี่ยน (ห้ามแยก useEffect ซ้ำซ้อน)
   useEffect(() => {
     if (!selectedRun || !selectedSymbol) return
+    
     setLoading(true)
-    fetch(`${API_URL}/runs/${selectedRun}/stats/${selectedSymbol}`)
-      .then(res => res.json())
+    
+    // ดึง Stats เหรียญที่เลือก
+    const fetchStats = fetch(`${API_URL}/runs/${selectedRun}/stats/${selectedSymbol}`)
+      .then(res => {
+        if (!res.ok) throw new Error('Stats not found')
+        return res.json()
+      })
       .then(data => {
         setSummary(data)
-        setLoading(false)
       })
       .catch(err => {
-        console.error(err)
-        // fallback ไปใช้ข้อมูล summary ทั่วไป
-        fetch(`${API_URL}/runs/${selectedRun}`)
+        console.warn('Per-symbol stats failed, falling back to general run info:', err)
+        // Fallback
+        return fetch(`${API_URL}/runs/${selectedRun}`)
           .then(res => res.json())
           .then(data => {
             setSummary(data)
-            setLoading(false)
-          })
-          .catch(() => {
-            setSummary(null)
-            setLoading(false)
           })
       })
-  }, [selectedRun, selectedSymbol])
 
-  // ดึง trades ของเหรียญที่เลือก
-  useEffect(() => {
-    if (!selectedRun || !selectedSymbol) return
-    setLoading(true)
-    fetch(`${API_URL}/runs/${selectedRun}/trades/${selectedSymbol}`)
-      .then(res => res.json())
+    // ดึง Trades ของเหรียญที่เลือก
+    const fetchTrades = fetch(`${API_URL}/runs/${selectedRun}/trades/${selectedSymbol}`)
+      .then(res => {
+        if (!res.ok) throw new Error('Trades not found')
+        return res.json()
+      })
       .then(data => {
         setTrades(data)
-        setLoading(false)
       })
       .catch(err => {
         console.error(err)
         setTrades([])
-        setLoading(false)
       })
+
+    // เมื่อเสร็จทั้งสองอัน ค่อยเอา Loading ออก
+    Promise.all([fetchStats, fetchTrades]).finally(() => {
+      setLoading(false)
+    })
+
   }, [selectedRun, selectedSymbol])
 
   return (
