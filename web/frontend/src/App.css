@@ -256,6 +256,46 @@ table td {
   margin: 0;
 }
 
+.table-controls {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid #27272a;
+}
+
+.pagination button {
+  background: #27272a;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.pagination button:hover:not(:disabled) {
+  background: #3f3f46;
+}
+
+.pagination button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.pagination span {
+  color: #a1a1aa;
+  font-size: 14px;
+}
+
 .page-size-selector {
   display: flex;
   align-items: center;

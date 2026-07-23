@@ -1,33 +1,48 @@
-import React, { useState, useMemo } from 'react'
+import React from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ScatterChart, Scatter, AreaChart, Area, BarChart, Bar } from 'recharts'
 
 interface Props {
-  trades: any[];
+  trades: any[];          // ทั้งหมด (สำหรับวาดกราฟ)
+  paginatedTrades: any[]; // เฉพาะหน้าปัจจุบัน (แสดงในตาราง)
+  total: number;
+  page: number;
+  limit: number;
+  sort: string;
+  order: 'asc' | 'desc';
+  setPage: (p: number) => void;
+  setLimit: (l: number) => void;
+  setSort: (s: string) => void;
+  setOrder: (o: 'asc' | 'desc') => void;
   symbol: string;
 }
 
-type SortKey = 'index' | 'side' | 'open_time' | 'ep' | 'dca_count' | 'pnl_usd' | 'holding_minutes' | 'close_reason'
-type SortDir = 'asc' | 'desc'
-
-const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
-  const [sortKey, setSortKey] = useState<SortKey>('open_time')
-  const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const [pageSize, setPageSize] = useState<number>(50)
-
-  // ฟังก์ชันสลับ sort
-  const toggleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir(prev => prev === 'asc' ? 'desc' : 'asc')
+const TradeChart: React.FC<Props> = ({ 
+  trades, 
+  paginatedTrades, 
+  total, 
+  page, 
+  limit, 
+  sort, 
+  order, 
+  setPage, 
+  setLimit, 
+  setSort, 
+  setOrder, 
+  symbol 
+}) => {
+  
+  const toggleSort = (key: string) => {
+    if (sort === key) {
+      setOrder(order === 'asc' ? 'desc' : 'asc')
     } else {
-      setSortKey(key)
-      setSortDir('desc')
+      setSort(key)
+      setOrder('desc')
     }
   }
 
-  // Sort indicator
-  const sortIndicator = (key: SortKey) => {
-    if (sortKey !== key) return ' ↕'
-    return sortDir === 'asc' ? ' ↑' : ' ↓'
+  const sortIndicator = (key: string) => {
+    if (sort !== key) return ' ↕'
+    return order === 'asc' ? ' ↑' : ' ↓'
   }
 
   // ฟังก์ชันจัดรูปแบบเวลาถือครองให้อ่านง่าย
@@ -49,7 +64,7 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
 
   if (!trades || trades.length === 0) return null
 
-  // เตรียมข้อมูล Equity Curve
+  // เตรียมข้อมูล Equity Curve (วาดกราฟ)
   let cumPnl = 0
   const equityData = trades.map((t, i) => {
     cumPnl += parseFloat(t.pnl_usd || 0)
@@ -86,44 +101,7 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
   const longTrades = equityData.filter(t => t.side === 'LONG')
   const shortTrades = equityData.filter(t => t.side === 'SHORT')
 
-  // ===== Sorted Trades =====
-  const sortedTrades = useMemo(() => {
-    const withIndex = trades.map((t, i) => ({ ...t, _origIndex: trades.length - i }))
-
-    withIndex.sort((a, b) => {
-      let aVal: any, bVal: any
-
-      switch (sortKey) {
-        case 'index':
-          aVal = a._origIndex; bVal = b._origIndex; break
-        case 'side':
-          aVal = a.side; bVal = b.side; break
-        case 'open_time':
-          aVal = a.open_time; bVal = b.open_time; break
-        case 'ep':
-          aVal = parseFloat(a.ep); bVal = parseFloat(b.ep); break
-        case 'dca_count':
-          aVal = parseInt(a.dca_count); bVal = parseInt(b.dca_count); break
-        case 'pnl_usd':
-          aVal = parseFloat(a.pnl_usd); bVal = parseFloat(b.pnl_usd); break
-        case 'holding_minutes':
-          aVal = parseInt(a.holding_minutes); bVal = parseInt(b.holding_minutes); break
-        case 'close_reason':
-          aVal = a.close_reason; bVal = b.close_reason; break
-        default:
-          return 0
-      }
-
-      if (typeof aVal === 'string') {
-        return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
-      }
-      return sortDir === 'asc' ? aVal - bVal : bVal - aVal
-    })
-
-    return withIndex
-  }, [trades, sortKey, sortDir])
-
-  const displayTrades = sortedTrades.slice(0, pageSize)
+  const totalPages = Math.ceil(total / limit)
 
   return (
     <div className="charts-section">
@@ -163,7 +141,7 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="index" name="Trade" />
               <YAxis dataKey="pnl" name="PnL" label={{ value: 'USD', angle: -90, position: 'insideLeft' }} />
-            <Tooltip formatter={(value: any) => [`$${parseFloat(value).toFixed(2)}`, 'PnL' as any]} />
+              <Tooltip formatter={(value: any) => [`$${parseFloat(value).toFixed(2)}`, 'PnL' as any]} />
               <Scatter data={longTrades} fill="#22c55e" name="LONG" />
               <Scatter data={shortTrades} fill="#ef4444" name="SHORT" />
             </ScatterChart>
@@ -177,17 +155,20 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
 
       <div className="trades-table-container">
         <div className="trades-table-header">
-          <h3>Trades Log ({trades.length.toLocaleString()} total)</h3>
-          <div className="page-size-selector">
-            <label>Show: </label>
-            <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-              <option value={500}>500</option>
-            </select>
+          <h3>Trades Log ({total.toLocaleString()} total)</h3>
+          <div className="table-controls">
+            <div className="page-size-selector">
+              <label>Show: </label>
+              <select value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={200}>200</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
           </div>
         </div>
+
         <table className="trades-table">
           <thead>
             <tr>
@@ -202,9 +183,9 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
             </tr>
           </thead>
           <tbody>
-            {displayTrades.map((t, i) => (
+            {paginatedTrades.map((t, i) => (
               <tr key={i}>
-                <td>{t._origIndex}</td>
+                <td>{t.index || (total - ((page - 1) * limit) - i)}</td>
                 <td className={t.side === 'LONG' ? 'text-green' : 'text-red'}>{t.side}</td>
                 <td>{t.open_time}</td>
                 <td>${parseFloat(t.ep).toLocaleString()}</td>
@@ -212,12 +193,25 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
                 <td className={parseFloat(t.pnl_usd) >= 0 ? 'text-green' : 'text-red'}>
                   ${parseFloat(t.pnl_usd).toFixed(2)}
                 </td>
-                <td className={parseInt(t.holding_minutes) >= 10080 ? 'hold-critical' : parseInt(t.holding_minutes) >= 1440 ? 'hold-warn' : ''}>{formatHoldingTime(t.holding_minutes)}</td>
+                <td className={parseInt(t.holding_minutes) >= 10080 ? 'hold-critical' : parseInt(t.holding_minutes) >= 1440 ? 'hold-warn' : ''}>
+                  {formatHoldingTime(t.holding_minutes)}
+                </td>
                 <td>{t.close_reason}</td>
               </tr>
             ))}
           </tbody>
         </table>
+
+        {/* Pagination UI */}
+        <div className="pagination">
+          <button disabled={page <= 1} onClick={() => setPage(page - 1)}>
+            ◀ Prev
+          </button>
+          <span>Page {page} of {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+            Next ▶
+          </button>
+        </div>
       </div>
     </div>
   )
