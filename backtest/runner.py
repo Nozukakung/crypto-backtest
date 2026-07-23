@@ -53,6 +53,10 @@ def _auto_save_results(symbol, result, cfg):
     # Insert trades
     trades_list = trades.to_dict('records')
     for t in trades_list:
+        # แปลง Timestamp เป็น string
+        open_t = str(t.get('open_time')) if t.get('open_time') is not None else ''
+        close_t = str(t.get('close_time')) if t.get('close_time') is not None else ''
+        
         cursor.execute("""
             INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -60,8 +64,8 @@ def _auto_save_results(symbol, result, cfg):
             run_id,
             symbol,
             t.get('side'),
-            t.get('open_time'),
-            t.get('close_time'),
+            open_t,
+            close_t,
             float(t.get('ep', 0)),
             float(t.get('bep', 0)),
             float(t.get('tp', 0)),

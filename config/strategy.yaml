@@ -23,7 +23,7 @@ order:
 position:
   dca_trigger_below_bep_percent: 0.3
   dca_multiplier: 1.0
-  dca_max_cap_usd: 50000.0         # Cap $50K (margin $5,000 ที่ 10x)
+  dca_max_cap_usd: 25000.0         # Cap $25K (margin $2,500 ที่ 10x)
   long_timeout_minutes: 9999999     # ไม่มี Timeout (ตาเล็กต้นฉบับ)
   short_timeout_minutes: 9999999    # ไม่มี Timeout (ตาเล็กต้นฉบับ)
   cutloss_after_stop_minutes: 9999999  # ปิด Cut Loss (ไม่ตัดขาดทุน)
