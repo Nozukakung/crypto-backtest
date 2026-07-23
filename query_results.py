@@ -13,14 +13,16 @@ import sys, os, json
 import glob
 from datetime import datetime
 
-RESULTS_DIR = "results"
+RESULTS_DIR = "results/latest"
 
 def load_results():
     """โหลด summary.json และไฟล์ stats ทั้งหมด"""
     summary_path = os.path.join(RESULTS_DIR, "summary.json")
     if not os.path.exists(summary_path):
-        # ลองหาไฟล์ stats แต่ละเหรียญ
+        # ถ้าไม่มี summary.json ลองหา in folder
         stats_files = sorted(glob.glob(os.path.join(RESULTS_DIR, "*_stats.json")))
+        # กรอง _last_run.txt ออก
+        stats_files = [f for f in stats_files if not os.path.basename(f).startswith("_")]
         if not stats_files:
             return None
         results = []

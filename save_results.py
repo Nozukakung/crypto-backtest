@@ -72,14 +72,19 @@ def save_one(symbol, cfg, results_dir="results"):
 
     return result
 
-def save_all(symbols, cfg=None):
+def save_all(symbols, cfg=None, results_dir="results"):
     """รัน Backtest ทุกเหรียญ แล้วรวมเป็น summary"""
     if cfg is None:
         cfg = load_config()
 
+    # สร้างโฟลเดอร์แยกตาม timestamp อัตโนมัติ
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = os.path.join(results_dir, timestamp)
+    os.makedirs(run_dir, exist_ok=True)
+    
     results = []
     for sym in symbols:
-        r = save_one(sym, cfg)
+        r = save_one(sym, cfg, run_dir)
         results.append(r)
         pnl = r['stats']['total_pnl_usd']
         dd = r['stats']['max_drawdown_pct']
@@ -106,16 +111,35 @@ def save_all(symbols, cfg=None):
         "per_symbol": results,
     }
 
-    summary_path = os.path.join("results", "summary.json")
+    summary_path = os.path.join(run_dir, "summary.json")
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
     print(f"\n{'='*60}")
     print(f"TOTAL: PnL ${total_pnl:>10,.2f} | Max DD {max_dd:.2f}% | Trades {total_trades} | Liq {total_liq}")
-    print(f"Results saved to: results/")
+    print(f"Results saved to: {run_dir}")
     print(f"  - summary.json (all stats)")
     for r in results:
         print(f"  - {r['symbol']}_stats.json + {r['symbol']}_trades.csv")
+
+    # อัปเดต 'results/latest' ให้ชี้ไปโฟลเดอร์ล่าสุด (สำหรับ query ง่ายๆ)
+    latest_dir = os.path.join("results", "latest")
+    os.makedirs(latest_dir, exist_ok=True)
+    # สร้างไฟล์ summary.json ตัวล่าสุด
+    with open(os.path.join(latest_dir, "summary.json"), "w") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+    # คัดลอกไฟล์ stats + csv ทุกเหรียญไป latest
+    import shutil
+    for r in results:
+        sym = r['symbol']
+        with open(os.path.join(latest_dir, f"{sym}_stats.json"), "w") as f:
+            json.dump(r, f, indent=2, ensure_ascii=False)
+        shutil.copy2(os.path.join(run_dir, f"{sym}_trades.csv"), os.path.join(latest_dir, f"{sym}_trades.csv"))
+
+    # บันทึกว่า 'latest' ชี้ไปที่ไหน
+    with open(os.path.join(latest_dir, "_last_run.txt"), "w") as f:
+        f.write(f"{timestamp}\n")
+        f.write(f"Run at: {datetime.now().isoformat()}\n")
 
     return summary
 
