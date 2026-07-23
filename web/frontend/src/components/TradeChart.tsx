@@ -30,6 +30,23 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
     return sortDir === 'asc' ? ' ↑' : ' ↓'
   }
 
+  // ฟังก์ชันจัดรูปแบบเวลาถือครองให้อ่านง่าย
+  const formatHoldingTime = (minutesStr: any) => {
+    const totalMinutes = parseInt(minutesStr || 0)
+    if (isNaN(totalMinutes) || totalMinutes <= 0) return '0m'
+
+    const d = Math.floor(totalMinutes / 1440)
+    const h = Math.floor((totalMinutes % 1440) / 60)
+    const m = totalMinutes % 60
+
+    if (d > 0) {
+      return `${d}d ${h}h`
+    } else if (h > 0) {
+      return `${h}h ${m}m`
+    }
+    return `${m}m`
+  }
+
   if (!trades || trades.length === 0) return null
 
   // เตรียมข้อมูล Equity Curve
@@ -180,7 +197,7 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
               <th onClick={() => toggleSort('ep')} className="sortable">EP{sortIndicator('ep')}</th>
               <th onClick={() => toggleSort('dca_count')} className="sortable">DCA{sortIndicator('dca_count')}</th>
               <th onClick={() => toggleSort('pnl_usd')} className="sortable">PnL{sortIndicator('pnl_usd')}</th>
-              <th onClick={() => toggleSort('holding_minutes')} className="sortable">Hold (min){sortIndicator('holding_minutes')}</th>
+              <th onClick={() => toggleSort('holding_minutes')} className="sortable">Hold Time{sortIndicator('holding_minutes')}</th>
               <th onClick={() => toggleSort('close_reason')} className="sortable">Reason{sortIndicator('close_reason')}</th>
             </tr>
           </thead>
@@ -195,7 +212,7 @@ const TradeChart: React.FC<Props> = ({ trades, symbol }) => {
                 <td className={parseFloat(t.pnl_usd) >= 0 ? 'text-green' : 'text-red'}>
                   ${parseFloat(t.pnl_usd).toFixed(2)}
                 </td>
-                <td>{t.holding_minutes}</td>
+                <td className={parseInt(t.holding_minutes) >= 10080 ? 'hold-critical' : parseInt(t.holding_minutes) >= 1440 ? 'hold-warn' : ''}>{formatHoldingTime(t.holding_minutes)}</td>
                 <td>{t.close_reason}</td>
               </tr>
             ))}

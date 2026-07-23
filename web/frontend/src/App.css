@@ -225,6 +225,16 @@ table td {
 .dot.red { background: #ef4444; }
 
 /* Trades Table */
+.hold-warn {
+  color: #f59e0b !important;
+  font-weight: 600;
+}
+
+.hold-critical {
+  color: #ef4444 !important;
+  font-weight: 700;
+}
+
 .trades-table thead th {
   cursor: pointer;
   user-select: none;
