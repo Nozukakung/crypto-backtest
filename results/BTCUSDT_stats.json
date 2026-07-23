@@ -1,0 +1,38 @@
+{
+  "symbol": "BTCUSDT",
+  "run_at": "2026-07-23T06:46:55.068321",
+  "config_hash": 3250251985030050840,
+  "stats": {
+    "total_pnl_usd": 3706.86,
+    "max_drawdown_pct": 0.0,
+    "win_rate": 100.0,
+    "total_trades": 2462,
+    "total_volume_usd": 2122400.0
+  },
+  "trades_summary": {
+    "max_dca_count": 277,
+    "avg_dca_count": 3.31,
+    "median_dca_count": 0,
+    "max_holding_minutes": 193230,
+    "avg_holding_minutes": 109.7,
+    "liquidations": 0,
+    "tp_count": 2462,
+    "end_count": 0
+  },
+  "margin_analysis": {
+    "max_margin_used_usd": 5560.0,
+    "free_margin_remaining": 44440.0
+  },
+  "side_breakdown": {
+    "long": {
+      "count": 1341,
+      "pnl": 1784.39,
+      "max_dca": 256
+    },
+    "short": {
+      "count": 1121,
+      "pnl": 1922.47,
+      "max_dca": 277
+    }
+  }
+}

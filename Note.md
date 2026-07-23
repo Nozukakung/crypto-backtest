@@ -1,65 +1,151 @@
-# 📝 บันทึกความจำกลยุทธ์ "ตาเล็ก 98SE" (Exact Logic Notes)
+# 📝 บันทึกกลยุทธ์ "ตาเล็ก 98SE" — Crypto Backtest
 
-ไฟล์นี้จัดทำขึ้นเพื่อบันทึก **กฎเหล็ก เงื่อนไข และการปรับแต่งสเปค** เพื่อป้องกันการสับสนในอนาคต
-
----
-
-## 🎯 1. สรุปผลการทดสอบที่ดีที่สุด (Sweet Spot)
-* **Config:** ทุน $50,000 | ขนาด $200/ไม้ | DCA 0.3% | TP 0.2% | Leverage 10x | Maker Order (Fee 0.02%)
-* **เหรียญ:** BTC, DOGE, ETH, BNB
-
-| สเปค | ผลลัพธ์โดยรวม (3 ปี) | ข้อสังเกต |
-|:---:|:---:|:---|
-| **Cap $25K + Buffer 50%** | **PnL รวม +$33,780** (ROI 67.5%) | DD ต่ำมาก (เฉลี่ย 5-17%) ล้างพอร์ตเพียงเหรียญละ 1 ครั้ง |
-| **Cap $50K + Buffer 50%** | **PnL รวม +$45,917** (ROI 91.8%) | กำไรดีที่สุด แต่ความเสี่ยงขยับตาม |
+ไฟล์นี้บันทึก **กฎเหล็ก สูตรคำนวณ และบทเรียน** ทั้งหมดจากการพัฒนา
 
 ---
 
-## 📐 2. กฎและเงื่อนไขทางคณิตศาสตร์ในโค้ด
+## 🎯 1. สรุปผลลัพธ์ล่าสุด
 
-### 2.1 สัญญาณเปิดไม้แรก (Signal)
-* ใช้ **RSI Period 14** เป็นสัญญาณเดี่ยว (RSI Only):
-  * **LONG:** RSI < 40
-  * **SHORT:** RSI > 60
-  * *หมายเหตุ:* เพื่อให้ได้ปริมาณเทรดบ่อยแบบตาเล็ก (Volume เฉลี่ย $1M - $5M ต่อเดือน)
+### Config ตัวจบ: Cap $50K, No Timeout, TP 0.2%, No CutLoss, 10x
+
+| เหรียญ | PnL | DD | Max DCA | Liq | Trades | WR |
+|:------:|:---:|:--:|:-------:|:---:|:------:|:--:|
+| **BTC** | **+$3,707** | **0.00%** | 277 | 0 | 2,462 | 100% |
+| **DOGE** | **+$13,761** | **0.00%** | 252 | 0 | 10,959 | 100% |
+| **BNB** | **+$6,393** | **0.00%** | 253 | 0 | 4,516 | 100% |
+| **ETH** | **+$4,413** | 8.73% | 253 | 1 | 6,226 | 100% |
+| **TOTAL** | **+$28,274** | **8.73%** | **277** | **1** | **24,163** | **100%** |
+
+> ROI 56.5% ใน 3 ปี (~18.8%/ปี) • DD 8.73% • Max DCA 277 ไม้ • Liq 1 ครั้ง (ETH)
+
+### Config อื่นๆ ที่ทดสอบ
+
+| Config | PnL | DD | Max DCA | Liq | หมายเหตุ |
+|:------:|:---:|:--:|:-------:|:---:|---------|
+| Cap $50K, Timeout 30/120 | +$11,360 | 2.53% | 122 | 0 | ปลอดภัยกว่า แต่กำไรน้อยกว่า 2.5x |
+| Cap $50K, No Timeout | **+$28,274** 🏆 | 8.73% | 277 | 1 | **ตาเล็กต้นฉบับจริง** |
+| No Cap, No Timeout | -$277K | 183% | 2,758 | 2,320 | หายนะ |
+
+---
+
+## 📐 2. กฎและเงื่อนไข
+
+### 2.1 สัญญาณเปิดไม้แรก (Signal — RSI Only)
+| ฝั่ง | เงื่อนไข |
+|:----:|:--------:|
+| **LONG** | RSI(14) < 40 |
+| **SHORT** | RSI(14) > 60 |
 
 ### 2.2 สัญญาณการถัว (DCA Trigger)
-* **ไม่ต้องเช็ค RSI หรือ Candle Pattern ซ้ำ** (สูตรเก่าทำกำไรดีที่สุดและไม่ Liq ง่าย)
-* เช็คระยะห่างจากราคาเฉลี่ยปัจจุบัน (BEP) ต้อง **กว้างกว่า 0.3% ขึ้นไป**:
-  $$\text{Distance}\% = \frac{|\text{Current Price} - \text{BEP}|}{\text{BEP}} \times 100 \ge 0.3\%$$
+- **ห้ามเช็ค RSI หรือ Candle Pattern ซ้ำ** — สูตรเดิมทำกำไรดีที่สุด
+- เช็คห่างจาก **BEP** > 0.3% เท่านั้น:
 
-### 2.3 การคำนวณราคา Liquidation (Cross Margin)
-* จำลอง Cross Margin โดยใช้เงินสำรองของพอร์ต (Buffer Fund) ยอมขาดทุนได้ **50% ของทุนสะสม** ก่อนระบบบังคับล้างพอร์ต:
-  $$\text{Buffer USD} = \text{Portfolio Capital} \times 0.50$$
-  * **ฝั่ง LONG:** $\text{Liq Price} = \text{Entry Price} - \frac{\text{Buffer USD}}{\text{Total Qty}}$
-  * **ฝั่ง SHORT:** $\text{Liq Price} = \text{Entry Price} + \frac{\text{Buffer USD}}{\text{Total Qty}}$
+$$\text{Distance}\% = \frac{|\text{Current Price} - \text{BEP}|}{\text{BEP}} \times 100 \ge 0.3\%$$
 
-### 2.4 ระบบ "มัดรวม" (Timeout 30 / 120 นาที)
-* เมื่อเวลาถือครองเกิน **30 นาที (LONG)** หรือ **120 นาที (SHORT)**:
-  * **หยุดส่งคำสั่ง DCA เพิ่มทันที** (`dca_disabled = True`) เพื่อไม่ให้พอร์ตบวมและลดความเสี่ยง
-  * **ห้ามคัดขาดทุนเด็ดขาด!** ปล่อย Position ค้างไว้และตั้ง Limit Order ขายทำกำไรที่จุด **BEP + 0.2%** เสมอ รอราคาเด้งกลับมาปิดเอง
+### 2.3 Liquidation Price (Cross Margin Buffer 50%)
+$$\text{Buffer USD} = \text{Portfolio Capital} \times 0.50$$
+- **LONG:** $\text{Liq} = \text{Entry} - \frac{\text{Buffer USD}}{\text{Total QTY}}$
+- **SHORT:** $\text{Liq} = \text{Entry} + \frac{\text{Buffer USD}}{\text{Total QTY}}$
 
-### 2.5 ระบบจัดการ Pending Limit Order (Stale Order Timeout 10 นาที)
-* เพื่อแก้ปัญหา "RSI ค้าง ทำให้วาง Order ทับทวนลูปจนบอทเปิดไม้แรกไม่ได้" หรือ "Order ค้างตลอดกาลบล็อคสัญญาณใหม่":
-  * **ไม่วาง Order ใหม่ทับ** หากมี Pending Limit Order สำหรับเปิดไม้แรกค้างอยู่ (`is_tp=False`)
-  * **จำกัดเวลา Pending Order 10 นาที** (`stale_count >= 10`) หากหมดเวลาแล้วราคาไม่ชน ให้ยกเลิก Order นั้นทิ้งเพื่อเคลียร์ทางรับสัญญาณถัดไป
+### 2.4 TP = BEP + 0.2%
+- ห้าม CutLoss เด็ดขาด
+- ปล่อย Position ค้างรอ Mean Reversion
 
----
+### 2.5 Cap $50K
+- `total_size_usd >= cap` → หยุดถัว
+- Margin สูงสุด = $5,500 (11% ของพอร์ต $50K)
+- Free Margin เหลือ = $44,500 (89%)
 
-## ⚠️ 3. ข้อควรระวังและบั๊กที่แก้ไขแล้ว (Pitfalls & Fixed Bugs)
-
-1. **Bug คำนวณ Cap ซ้ำซ้อน:**
-   * *เดิม:* `total_size_usd + initial_size_usd > cap` (ทำให้หยุด DCA เร็วกว่าความจริง)
-   * *แก้ไข:* `total_size_usd >= cap` 
-2. **Bug ปัดเศษ Lot Size (BTC):**
-   * Binance ปัดเศษ Lot Size BTC ได้ทศนิยมสูงสุด 3 ตำแหน่ง (0.001 BTC) ทำให้บางช่วงที่ BTC ราคาแพง ไม้จริงจะมีมูลค่าต่ำกว่า $200 (เช่น $180) ส่งผลให้จำนวนไม้ที่คำนวณได้จริงอาจสูงกว่า 100 ไม้ แต่ Notional รวมจะไม่เกิน Cap
-3. **Bug Isolated Fallback ของ Liq Price:**
-   * *เดิม:* ฟังก์ชัน `check_liquidation` ไม่ได้ส่งผ่านค่า `portfolio.capital` ไปให้ฟังก์ชันอัปเดต ทำให้มันรันด้วยค่า default `0.0` ส่งผลให้ระบบถอยไปใช้ Isolated Margin ล้างพอร์ตบ่อยเกินจริง
-   * *แก้ไข:* ส่งผ่าน `portfolio.capital` เสมอในทุกๆ จุดที่มีการเช็คและคำนวณ
-4. **Bug Pending Order โดนล้างระลอกคลื่น / ลบล้างค้างคอย:**
-   * *เดิม:* ในลูปย่อย หากไม่มีสัญญาณ RSI ใหม่ ระบบจะเคลียร์ `active_order` เป็น `None` ทิ้งทันที ทำให้ Limit Order เปิดไม้แรกหายไปในนาทีถัดไป หรือถ้ามีสัญญาณยาวๆ บอทจะวนสร้างทับตัวเก่าจนไม่มีโอกาสจับคู่
-   * *แก้ไข:* ล็อคไม่ให้สร้างทับตัวเดิม และย้าย `active_order` logic ออกมานอกบล็อกตรวจสอบ `position` พร้อมทั้งใส่ `stale_count` นับเวลาเคลียร์ 10 นาทีตามกฎ 2.5
+### 2.6 Timeout (ตาเล็กจริง = ไม่มี!)
+- ตาเล็กจริง **ไม่มี Timeout** — ถัวไปเรื่อยๆ จนกว่าจะชน Cap หรือ TP
+- ใส่ Timeout 30/120 ไว้เป็นตัวเลือกปลอดภัย
 
 ---
 
-*บันทึกโดย Hermes Agent - วันที่ 22 กรกฎาคม 2026*
+## 🐛 3. Bugs ที่แก้แล้ว
+
+| # | Bug | สาเหตุ | Fix |
+|---|-----|-------|-----|
+| 1 | Liq Price ผิด | ไม่ส่ง `portfolio.capital` → fallback Isolated | ส่ง capital เสมอ + Buffer 50% |
+| 2 | DCA Loop无穷 | BEP + ไม่มี Cap → 2,758 ไม้ | ใส่ Cap $50K |
+| 3 | Pending Order ถูกทับ | Signal ซ้ำทุกนาทีสร้าง order ใหม่ | เช็ค `active_order` ก่อน |
+| 4 | Pending Order ค้างตลอดกาล | ไม่มี Stale Timeout | Stale Timeout 10 นาที |
+| 5 | No Signal → ลบ Pending | `else: active_order = None` | ตรวจสอบก่อนลบ |
+| 6 | Order Loop ไม่มี continue | ไหลไปโดน signal block | เพิ่ม continue |
+| 7 | last_dca_price Grid DCA น้อยไป | Max DCA 10-77 ไม้ | กลับไป BEP-based + ใช้ Cap ป้องกัน |
+
+---
+
+## 💡 4. บทเรียนสำคัญ
+
+1. **DCA Grid ที่ถูกต้อง = BEP-based + Cap + Timeout**
+   - BEP-based DCA ถูกต้องแล้ว แต่ต้องมี Cap เป็นขอบเขตเสมอ
+   - ไม่ต้องใช้ `last_dca_price` — มันทำให้ Grid ทำงานไม่ถูกต้อง
+
+2. **CutLoss = ทำลาย DCA Mean Reversion**
+   - CutLoss ตัดก่อนราคาจะกลับ → ขาดทุนสะสม
+   - ใช้ Margin Management (Buffer Fund + Cap) แทน
+
+3. **Cross Margin Buffer 50% ทำให้ DD ต่ำ**
+   - Liq Distance = 53% จาก Entry → ถัวลึกได้มาก
+   - Max Margin แค่ $5,500 (11% ของพอร์ต)
+
+4. **RSI Only ดีกว่า RSI + Pattern**
+   - RSI + Pattern = สัญญาณน้อย 27x → กำไรน้อยกว่า
+   - ตาเล็กจริงใช้ RSI Only
+
+5. **Limit Order ต้องดูแลดี**
+   - อย่าทับ Pending Order
+   - อย่าลบเมื่อไม่มีสัญญาณ
+   - ต้องมี Stale Timeout
+   - ต้อง `continue` หลัง Order Loop
+
+---
+
+## 📁 5. โครงสร้างไฟล์
+
+```
+crypto-backtest/
+├── data/store.py          # CSV → Parquet
+├── data/parquet/          # ข้อมูล OHLC 1m
+├── engine/indicators.py   # RSI(14) Wilder's
+├── engine/exchange.py     # Lot/Tick Size
+├── engine/position.py     # Position + DCA + TP + Liq
+├── backtest/runner.py     # Main Loop
+├── backtest/portfolio.py  # Equity + Trade Log
+├── analytics/report.py    # HTML Report (Chart.js)
+├── config/strategy.yaml   # พารามิเตอร์
+├── results/               # ผลลัพธ์ Backtest (JSON + CSV)
+├── save_results.py        # บันทึกผลลัพธ์
+├── query_results.py       # วิเคราะห์ผลลัพธ์
+├── stats.py               # สถิติรายวัน/สัปดาห์/เดือน
+├── Note.md                # ไฟล์นี้
+└── README.md
+```
+
+---
+
+## 🔧 6. Quick Reference
+
+```bash
+# รัน Backtest 4 เหรียญ
+python -c "
+from backtest.runner import run_backtest, load_config
+cfg = load_config()
+for sym in ['BTCUSDT','DOGEUSDT','BNBUSDT','ETHUSDT']:
+    r = run_backtest(sym, cfg)
+    s = r['stats']; df = r['trades']
+    print(f\"{sym}: PnL \${s['total_pnl_usd']:>8,.2f} | DD {s['max_drawdown_pct']:.2f}% | Max DCA {int(df['dca_count'].max())} | Liq {(df['close_reason']=='LIQUIDATE').sum()} | Trades {len(df)}\")
+"
+
+# บันทึกผลลัพธ์
+python save_results.py
+
+# ดูผลลัพธ์ที่บันทึกไว้
+python query_results.py              # สรุปรวม
+python query_results.py BTCUSDT      # เจาะลึก BTC
+```
+
+---
+
+*บันทึกโดย Hermes Agent — 22 กรกฎาคม 2026*
