@@ -297,11 +297,10 @@ def run_backtest(symbol, cfg=None):
                     position.dca_disabled = True
                     position.dca_disabled_at = ts
 
-                # 3.3) Cut Loss: เช็คเวลาหลังหยุดถัว เกิน 24 ชม. (1440 นาที) หรือไม่
-                if position.dca_disabled and position.dca_disabled_at is not None:
-                    # คำนวณความต่างเวลา (เนื่องจาก timestamp เป็น string/datetime เราใช้ holding_minutes หลังหยุดถัวเทียบง่ายกว่า)
-                    # โดย dca_disabled_at เกิดที่ holding_minutes เท่าไหร่ -> ถ้าห่างเกิน 1440 นาที -> Cut Loss
-                    # เพื่อความเป๊ะ เราบันทึกเวลาหยุดถัวโดยใช้ holding_minutes เป็นเกณฑ์
+                # 3.3) Cut Loss: เช็คเวลาหลังหยุดถัว เกิน X นาที (เฉพาะกรณี Timeout จริง)
+                # ถ้า cutloss_minutes = 0 → ปิดทันทีเมื่อ Timeout (ไม่ใช่เมื่อ Cap)
+                if position.dca_disabled and position.dca_disabled_at is not None and timeout_hit:
+                    # คำนวณความต่างเวลา (ใช้ holding_minutes หลังหยุดถัวเทียบ)
                     if not hasattr(position, "dca_disabled_at_minutes") or position.dca_disabled_at_minutes is None:
                         position.dca_disabled_at_minutes = position.holding_time_minutes
 

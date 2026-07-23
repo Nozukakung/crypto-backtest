@@ -102,7 +102,20 @@ class Position:
 
     @property
     def take_profit_price(self):
-        tp_offset = self.config.get("take_profit_above_bep_percent", 0.2) / 100.0
+        """Dynamic TP: ยิ่งถัวมาก ยิ่ง TP เร็วขึ้น เพื่อคืน margin ไว"""
+        base_tp = self.config.get("take_profit_above_bep_percent", 0.2)
+        
+        # Dynamic TP ตาม DCA count
+        if self.dca_count <= 20:
+            tp_pct = base_tp                # 0.2% (default)
+        elif self.dca_count <= 50:
+            tp_pct = 0.15                   # 0.15%
+        elif self.dca_count <= 80:
+            tp_pct = 0.10                   # 0.10%
+        else:
+            tp_pct = 0.05                   # 0.05% (ถัวเยอะมาก → TP นิดเดียวก็พอ)
+        
+        tp_offset = tp_pct / 100.0
         if self.side == "LONG":
             tp = self.bep * (1.0 + tp_offset)
         else:
