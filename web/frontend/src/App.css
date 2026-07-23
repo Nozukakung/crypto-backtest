@@ -1,0 +1,268 @@
+:root {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #e4e4e7;
+  background-color: #09090b;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+.app {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.header {
+  text-align: center;
+  margin-bottom: 32px;
+  border-bottom: 1px solid #27272a;
+  padding-bottom: 24px;
+}
+
+.header h1 {
+  font-size: 2rem;
+  color: #fff;
+  margin: 0;
+}
+
+.subtitle {
+  color: #71717a;
+  margin-top: 8px;
+}
+
+/* Controls */
+.controls {
+  display: flex;
+  gap: 24px;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+}
+
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.control-group label {
+  font-weight: 600;
+  color: #a1a1aa;
+}
+
+.control-group select {
+  background: #18181b;
+  color: #e4e4e7;
+  border: 1px solid #3f3f46;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.control-group select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+/* Loading */
+.loading {
+  text-align: center;
+  padding: 64px;
+  color: #71717a;
+  font-size: 1.1rem;
+}
+
+/* Summary Section */
+.summary-section {
+  margin-bottom: 48px;
+}
+
+.summary-section h2 {
+  color: #fff;
+  margin-bottom: 24px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.stat-card {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.stat-card .stat-label {
+  font-size: 0.85rem;
+  color: #71717a;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-card .stat-value {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.stat-card.profit .stat-value { color: #22c55e; }
+.stat-card.dd .stat-value { color: #f59e0b; }
+.stat-card.trades .stat-value { color: #3b82f6; }
+.stat-card.liq .stat-value { color: #a855f7; }
+
+/* Tables */
+.trade-summary, .margin-summary, .side-breakdown {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.trade-summary h3, .margin-summary h3, .side-breakdown h3 {
+  color: #e4e4e7;
+  margin: 0 0 16px 0;
+  font-size: 1rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table td, table th {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #27272a;
+}
+
+table th {
+  color: #71717a;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+}
+
+table td {
+  color: #e4e4e7;
+}
+
+.danger { color: #ef4444; font-weight: 600; }
+.safe { color: #22c55e; }
+.text-green { color: #22c55e; }
+.text-red { color: #ef4444; }
+
+/* Charts */
+.charts-section {
+  margin-bottom: 48px;
+}
+
+.charts-section h2 {
+  color: #fff;
+  margin-bottom: 24px;
+}
+
+.chart-container {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.chart-container h3 {
+  color: #e4e4e7;
+  margin: 0 0 16px 0;
+  font-size: 1rem;
+}
+
+.chart-row {
+  display: flex;
+  gap: 24px;
+}
+
+.chart-container.half {
+  flex: 1;
+  min-width: 0;
+}
+
+.legend-inline {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #a1a1aa;
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.dot.green { background: #22c55e; }
+.dot.red { background: #ef4444; }
+
+/* Trades Table */
+.trades-table-container {
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 24px;
+  overflow-x: auto;
+}
+
+.trades-table-container h3 {
+  color: #e4e4e7;
+  margin: 0 0 16px 0;
+}
+
+.trades-table {
+  font-size: 0.85rem;
+}
+
+.trades-table th {
+  color: #71717a;
+  position: sticky;
+  top: 0;
+  background: #18181b;
+}
+
+.trades-table td {
+  white-space: nowrap;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .chart-row {
+    flex-direction: column;
+  }
+  .controls {
+    flex-direction: column;
+    gap: 16px;
+  }
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

@@ -1,0 +1,6 @@
+/* เคลียร์ index.css เก่า ให้ใช้สีจาก App.css เต็มระบบ */
+body {
+  margin: 0;
+  padding: 0;
+  background-color: #09090b;
+}

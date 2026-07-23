@@ -17,6 +17,14 @@ env/
 # Reports (generated)
 reports/
 
+# Results (auto-saved, keep latest only)
+results/20*
+results/latest/
+
+# Web (Node.js)
+web/*/node_modules/
+web/*/dist/
+
 # IDE
 .vscode/
 .idea/
@@ -27,6 +35,5 @@ reports/
 .DS_Store
 Thumbs.db
 
-# Secrets
-.env
-*.key
+# Lock files
+*.lock*
