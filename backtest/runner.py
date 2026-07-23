@@ -15,6 +15,86 @@ from engine.position import Position
 from backtest.portfolio import Portfolio, TradeLog
 
 
+def _auto_save_results(symbol, result, cfg):
+    """บันทึกผลลัพธ์ Backtest อัตโนมัติทุกครั้งที่รันเสร็จ"""
+    import os, json
+    from datetime import datetime
+    import shutil
+
+    results_dir = Path("results")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = results_dir / timestamp
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    stats = result['stats']
+    trades = result['trades']
+
+    # บันทึก stats
+    stats_data = {
+        "symbol": symbol,
+        "run_at": datetime.now().isoformat(),
+        "config_hash": hash(json.dumps(cfg, sort_keys=True, default=str)),
+        "stats": {
+            "total_pnl_usd": float(round(stats['total_pnl_usd'], 2)),
+            "max_drawdown_pct": float(round(stats['max_drawdown_pct'], 2)),
+            "win_rate": float(round(stats['win_rate'], 1)),
+            "total_trades": int(len(trades)),
+        },
+        "trades_summary": {
+            "max_dca_count": int(trades['dca_count'].max()),
+            "avg_dca_count": float(round(float(trades['dca_count'].mean()), 2)),
+            "median_dca_count": int(trades['dca_count'].median()),
+            "max_holding_minutes": int(trades['holding_minutes'].max()),
+            "avg_holding_minutes": float(round(float(trades['holding_minutes'].mean()), 1)),
+            "liquidations": int((trades['close_reason'] == 'LIQUIDATE').sum()),
+            "tp_count": int((trades['close_reason'] == 'TP').sum()),
+            "end_count": int((trades['close_reason'] == 'END').sum()),
+        },
+        "margin_analysis": {
+            "max_margin_used_usd": float(round((int(trades['dca_count'].max()) + 1) * 200 / 10, 2)),
+            "free_margin_remaining": float(round(50000 - (int(trades['dca_count'].max()) + 1) * 200 / 10, 2)),
+        },
+        "side_breakdown": {
+            "long": {
+                "count": int((trades['side'] == 'LONG').sum()),
+                "pnl": float(round(float(trades[trades['side'] == 'LONG']['pnl_usd'].sum()), 2)) if len(trades[trades['side'] == 'LONG']) > 0 else 0.0,
+                "max_dca": int(trades[trades['side'] == 'LONG']['dca_count'].max()) if len(trades[trades['side'] == 'LONG']) > 0 else 0,
+            },
+            "short": {
+                "count": int((trades['side'] == 'SHORT').sum()),
+                "pnl": float(round(float(trades[trades['side'] == 'SHORT']['pnl_usd'].sum()), 2)) if len(trades[trades['side'] == 'SHORT']) > 0 else 0.0,
+                "max_dca": int(trades[trades['side'] == 'SHORT']['dca_count'].max()) if len(trades[trades['side'] == 'SHORT']) > 0 else 0,
+            },
+        },
+    }
+
+    with open(run_dir / f"{symbol}_stats.json", "w") as f:
+        json.dump(stats_data, f, indent=2, ensure_ascii=False)
+
+    # บันทึก trades CSV
+    export_cols = ['symbol', 'side', 'open_time', 'close_time', 'ep', 'bep', 'tp',
+                   'dca_count', 'pnl_usd', 'pnl_pct', 'fee_usd', 'holding_minutes', 'close_reason']
+    trades[export_cols].to_csv(run_dir / f"{symbol}_trades.csv", index=False)
+
+    # อัปเดต results/latest
+    latest_dir = results_dir / "latest"
+    latest_dir.mkdir(parents=True, exist_ok=True)
+    with open(latest_dir / f"{symbol}_stats.json", "w") as f:
+        json.dump(stats_data, f, indent=2, ensure_ascii=False)
+    shutil.copy2(run_dir / f"{symbol}_trades.csv", latest_dir / f"{symbol}_trades.csv")
+    with open(latest_dir / "_last_run.txt", "w") as f:
+        f.write(f"{timestamp}\n{symbol}\nPnL: ${stats_data['stats']['total_pnl_usd']:,.2f}\n")
+    with open(latest_dir / f"summary.json", "w") as f:
+        json.dump(stats_data, f, indent=2, ensure_ascii=False)
+
+    pnl = stats_data['stats']['total_pnl_usd']
+    dd = stats_data['stats']['max_drawdown_pct']
+    liq = stats_data['trades_summary']['liquidations']
+    max_dca = stats_data['trades_summary']['max_dca_count']
+    trades_count = stats_data['stats']['total_trades']
+    print(f"💾 Saved: {run_dir.name}/ | PnL ${pnl:>8,.2f} | DD {dd:.2f}% | Max DCA {max_dca} | Liq {liq} | Trades {trades_count}")
+
+
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "strategy.yaml"
 
 
@@ -353,8 +433,13 @@ def run_backtest(symbol, cfg=None):
     equity_curve = pd.DataFrame(portfolio.equity_curve)
     stats = portfolio.get_stats()
 
-    return {
+    result = {
         "stats": stats,
         "equity_curve": equity_curve,
         "trades": trades_df,
     }
+
+    # ====== Auto-save results ======
+    _auto_save_results(symbol, result, cfg)
+
+    return result
