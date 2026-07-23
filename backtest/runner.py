@@ -87,66 +87,12 @@ def _auto_save_results(symbol, result, cfg):
     conn.commit()
     conn.close()
 
-    # 2. บันทึก Stats ลง JSON และ CSV เฉพาะ latest/ (เพื่อ backward compatibility กับ CLI query_results.py)
-    results_dir = Path("results")
-    latest_dir = results_dir / "latest"
-    latest_dir.mkdir(parents=True, exist_ok=True)
-    
-    # คำนวณ StatsData
-    stats_data = {
-        "symbol": symbol,
-        "run_at": datetime.now().isoformat(),
-        "config_hash": hash(json.dumps(cfg, sort_keys=True, default=str)),
-        "stats": {
-            "total_pnl_usd": float(round(stats['total_pnl_usd'], 2)),
-            "max_drawdown_pct": float(round(stats['max_drawdown_pct'], 2)),
-            "win_rate": float(round(stats['win_rate'], 1)),
-            "total_trades": int(len(trades)),
-        },
-        "trades_summary": {
-            "max_dca_count": int(trades['dca_count'].max()),
-            "avg_dca_count": float(round(float(trades['dca_count'].mean()), 2)),
-            "median_dca_count": int(trades['dca_count'].median()),
-            "max_holding_minutes": int(trades['holding_minutes'].max()),
-            "avg_holding_minutes": float(round(float(trades['holding_minutes'].mean()), 1)),
-            "liquidations": int((trades['close_reason'] == 'LIQUIDATE').sum()),
-            "tp_count": int((trades['close_reason'] == 'TP').sum()),
-            "end_count": int((trades['close_reason'] == 'END').sum()),
-        },
-        "margin_analysis": {
-            "max_margin_used_usd": float(round((int(trades['dca_count'].max()) + 1) * 200 / 10, 2)),
-            "free_margin_remaining": float(round(50000 - (int(trades['dca_count'].max()) + 1) * 200 / 10, 2)),
-        },
-        "side_breakdown": {
-            "long": {
-                "count": int((trades['side'] == 'LONG').sum()),
-                "pnl": float(round(float(trades[trades['side'] == 'LONG']['pnl_usd'].sum()), 2)) if len(trades[trades['side'] == 'LONG']) > 0 else 0.0,
-                "max_dca": int(trades[trades['side'] == 'LONG']['dca_count'].max()) if len(trades[trades['side'] == 'LONG']) > 0 else 0,
-            },
-            "short": {
-                "count": int((trades['side'] == 'SHORT').sum()),
-                "pnl": float(round(float(trades[trades['side'] == 'SHORT']['pnl_usd'].sum()), 2)) if len(trades[trades['side'] == 'SHORT']) > 0 else 0.0,
-                "max_dca": int(trades[trades['side'] == 'SHORT']['dca_count'].max()) if len(trades[trades['side'] == 'SHORT']) > 0 else 0,
-            },
-        },
-    }
-
-    with open(latest_dir / f"{symbol}_stats.json", "w") as f:
-        json.dump(stats_data, f, indent=2, ensure_ascii=False)
-    
-    export_cols = ['symbol', 'side', 'open_time', 'close_time', 'ep', 'bep', 'tp',
-                   'dca_count', 'pnl_usd', 'pnl_pct', 'fee_usd', 'holding_minutes', 'close_reason']
-    trades[export_cols].to_csv(latest_dir / f"{symbol}_trades.csv", index=False)
-    
-    with open(latest_dir / f"summary.json", "w") as f:
-        json.dump(stats_data, f, indent=2, ensure_ascii=False)
-
-    pnl = stats_data['stats']['total_pnl_usd']
-    dd = stats_data['stats']['max_drawdown_pct']
-    liq = stats_data['trades_summary']['liquidations']
-    max_dca = stats_data['trades_summary']['max_dca_count']
-    trades_count = stats_data['stats']['total_trades']
-    print(f"💾 Saved to SQLite + latest/ | PnL ${pnl:>8,.2f} | DD {dd:.2f}% | Max DCA {max_dca} | Liq {liq} | Trades {trades_count}")
+    pnl = float(round(stats['total_pnl_usd'], 2))
+    dd = float(round(stats['max_drawdown_pct'], 2))
+    liq = int((trades['close_reason'] == 'LIQUIDATE').sum())
+    max_dca = int(trades['dca_count'].max())
+    trades_count = int(len(trades))
+    print(f"💾 Saved to SQLite | PnL ${pnl:>8,.2f} | DD {dd:.2f}% | Max DCA {max_dca} | Liq {liq} | Trades {trades_count}")
 
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "strategy.yaml"
