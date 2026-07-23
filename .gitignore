@@ -21,6 +21,11 @@ reports/
 results/20*
 results/latest/
 
+# Database (auto-generated)
+results/*.db
+results/*.db-wal
+results/*.db-shm
+
 # Web (Node.js)
 web/*/node_modules/
 web/*/dist/

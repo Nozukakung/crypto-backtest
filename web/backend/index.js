@@ -1,133 +1,204 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const path = require('path');
-const csv = require('csv-parser');
+const sqlite3 = require('sqlite3').verbose();
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const RESULTS_DIR = path.join(__dirname, '../../results');
+const DB_PATH = path.join(__dirname, '../../results/backtest.db');
 
 app.use(cors());
 app.use(express.json());
 
-// Cache สำหรับ CSV trades
-const tradesCache = new Map()
-
-function loadTradesCSV(csvPath) {
-  if (tradesCache.has(csvPath)) {
-    return Promise.resolve(tradesCache.get(csvPath))
+// เปิด connection SQLite
+let db;
+function openDb() {
+  if (!db) {
+    db = new sqlite3.Database(DB_PATH, (err) => {
+      if (err) console.error('❌ SQLite connection error:', err.message);
+      else console.log('✅ Connected to SQLite DB:', DB_PATH);
+    });
+    db.run("PRAGMA journal_mode = WAL"); // เพิ่มความเร็ว concurrent read
+    db.run("PRAGMA cache_size = -10000"); // 10MB cache
   }
-  return new Promise((resolve, reject) => {
-    const results = []
-    fs.createReadStream(csvPath)
-      .pipe(csv())
-      .on('data', (data) => results.push(data))
-      .on('end', () => {
-        tradesCache.set(csvPath, results)
-        resolve(results)
-      })
-      .on('error', reject)
-  })
+  return db;
+}
+
+// Helper: ดึง run_timestamp ล่าสุดหรือ run_timestamp ตาม id
+function getRunTimestamp(id, cb) {
+  const ddb = openDb();
+  if (id === 'latest') {
+    ddb.get("SELECT run_timestamp FROM runs ORDER BY run_timestamp DESC LIMIT 1", (err, row) => {
+      if (err || !row) cb(null);
+      else cb(row.run_timestamp);
+    });
+  } else {
+    cb(id);
+  }
 }
 
 // 1. ดึงรายการ Runs ทั้งหมด
-app.get('/api/runs', async (req, res) => {
-  try {
-    if (!fs.existsSync(RESULTS_DIR)) return res.json([])
-    const files = fs.readdirSync(RESULTS_DIR)
-    const runs = []
-    for (const file of files) {
-      const fullPath = path.join(RESULTS_DIR, file)
-      const stat = fs.statSync(fullPath)
-      if (stat.isDirectory() && file !== 'latest' && file !== 'configs') {
-        const summaryPath = path.join(fullPath, 'summary.json')
-        let summary = null
-        if (fs.existsSync(summaryPath)) {
-          summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'))
-        }
-        runs.push({ id: file, time: file.replace('_', ' '), summary })
-      }
+app.get('/api/runs', (req, res) => {
+  openDb().all(
+    `SELECT run_timestamp as id, run_timestamp as time, 
+            total_pnl_usd, max_drawdown_pct, total_trades, 
+            total_liquidations, max_dca_any_symbol, config_hash
+     FROM runs ORDER BY run_timestamp DESC`, 
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      const runs = rows.map(r => ({ ...r, summary: null }));
+      res.json(runs);
     }
-    runs.sort((a, b) => b.id.localeCompare(a.id))
-    res.json(runs)
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
+  );
+});
 
 // 2. ดึง stats รายเหรียญ
 app.get('/api/runs/:id/stats/:symbol', (req, res) => {
-  const { id, symbol } = req.params
-  const targetId = id === 'latest' ? 'latest' : id
-  const statsPath = path.join(RESULTS_DIR, targetId, `${symbol}_stats.json`)
-  if (!fs.existsSync(statsPath)) {
-    return res.status(404).json({ error: `Stats for ${symbol} not found` })
-  }
-  try {
-    res.json(JSON.parse(fs.readFileSync(statsPath, 'utf8')))
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
+  const { id, symbol } = req.params;
+  
+  getRunTimestamp(id, (runTimestamp) => {
+    if (!runTimestamp) return res.status(404).json({ error: 'No run found' });
+    
+    openDb().get(
+      `SELECT 
+          r.run_timestamp as run_at,
+          r.config_hash,
+          SUM(t.pnl_usd) as total_pnl_usd,
+          MAX(t.pnl_usd) as max_drawdown_pct,
+          SUM(CASE WHEN t.close_reason != 'LIQUIDATE' THEN 1 ELSE 0 END) as winning_trades,
+          COUNT(*) as total_trades,
+          SUM(CASE WHEN t.close_reason = 'LIQUIDATE' THEN 1 ELSE 0 END) as liquidations,
+          MAX(t.dca_count) as max_dca_count,
+          AVG(t.dca_count) as avg_dca_count,
+          MAX(t.holding_minutes) as max_holding_minutes,
+          AVG(t.holding_minutes) as avg_holding_minutes,
+          SUM(CASE WHEN t.close_reason = 'TP' THEN 1 ELSE 0 END) as tp_count,
+          SUM(CASE WHEN t.close_reason = 'END' THEN 1 ELSE 0 END) as end_count,
+          SUM(CASE WHEN t.side = 'LONG' THEN 1 ELSE 0 END) as long_count,
+          SUM(CASE WHEN t.side = 'SHORT' THEN 1 ELSE 0 END) as short_count,
+          SUM(CASE WHEN t.side = 'LONG' THEN t.pnl_usd ELSE 0 END) as long_pnl,
+          SUM(CASE WHEN t.side = 'SHORT' THEN t.pnl_usd ELSE 0 END) as short_pnl,
+          MAX(CASE WHEN t.side = 'LONG' THEN t.dca_count ELSE 0 END) as long_max_dca,
+          MAX(CASE WHEN t.side = 'SHORT' THEN t.dca_count ELSE 0 END) as short_max_dca
+       FROM runs r
+       INNER JOIN trades t ON t.run_id = r.id
+       WHERE r.run_timestamp = ? AND t.symbol = ?
+       GROUP BY r.id`,
+      [runTimestamp, symbol],
+      (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row || row.total_trades === 0) return res.status(404).json({ error: 'No data' });
 
-// 3. ดึง summary ของ Run
-app.get('/api/runs/:id', (req, res) => {
-  const { id } = req.params
-  const targetId = id === 'latest' ? 'latest' : id
-  const runPath = path.join(RESULTS_DIR, targetId)
-  if (!fs.existsSync(runPath)) return res.status(404).json({ error: 'Run not found' })
-  try {
-    const btcPath = path.join(runPath, 'BTCUSDT_stats.json')
-    if (fs.existsSync(btcPath)) return res.json(JSON.parse(fs.readFileSync(btcPath, 'utf8')))
-    const summaryPath = path.join(runPath, 'summary.json')
-    if (!fs.existsSync(summaryPath)) return res.status(404).json({ error: 'Summary not found' })
-    res.json(JSON.parse(fs.readFileSync(summaryPath, 'utf8')))
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
-
-// 4. ดึง Trades แบบ Pagination + Server-side Sorting
-app.get('/api/runs/:id/trades/:symbol', async (req, res) => {
-  try {
-    const { id, symbol } = req.params
-    const targetId = id === 'latest' ? 'latest' : id
-    const csvPath = path.join(RESULTS_DIR, targetId, `${symbol}_trades.csv`)
-    if (!fs.existsSync(csvPath)) return res.status(404).json({ error: 'Trades not found' })
-
-    const page = parseInt(req.query.page) || 1
-    const limit = parseInt(req.query.limit) || 50
-    const sort = req.query.sort || 'holding_minutes'
-    const order = req.query.order === 'asc' ? 'asc' : 'desc'
-
-    const allTrades = await loadTradesCSV(csvPath)
-
-    // Sort
-    allTrades.sort((a, b) => {
-      let aVal = a[sort], bVal = b[sort]
-      if (['dca_count', 'holding_minutes', 'ep', 'pnl_usd', 'pnl_pct', 'fee_usd', 'index'].includes(sort)) {
-        aVal = parseFloat(aVal); bVal = parseFloat(bVal)
+        const wr = (row.winning_trades / row.total_trades * 100) || 0;
+        res.json({
+          symbol,
+          run_at: row.run_at,
+          config_hash: parseInt(row.config_hash, 16) || 0,
+          stats: {
+            total_pnl_usd: row.total_pnl_usd || 0,
+            max_drawdown_pct: row.max_drawdown_pct || 0,
+            win_rate: wr,
+            total_trades: row.total_trades
+          },
+          trades_summary: {
+            max_dca_count: row.max_dca_count || 0,
+            avg_dca_count: row.avg_dca_count || 0,
+            median_dca_count: 0,
+            max_holding_minutes: row.max_holding_minutes || 0,
+            avg_holding_minutes: row.avg_holding_minutes || 0,
+            liquidations: row.liquidations || 0,
+            tp_count: row.tp_count || 0,
+            end_count: row.end_count || 0
+          },
+          margin_analysis: {
+            max_margin_used_usd: ((row.max_dca_count || 0) + 1) * 200 / 10,
+            free_margin_remaining: 50000 - ((row.max_dca_count || 0) + 1) * 200 / 10
+          },
+          side_breakdown: {
+            long: { count: row.long_count, pnl: row.long_pnl, max_dca: row.long_max_dca },
+            short: { count: row.short_count, pnl: row.short_pnl, max_dca: row.short_max_dca }
+          }
+        });
       }
-      if (typeof aVal === 'string') return order === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal)
-      return order === 'asc' ? aVal - bVal : bVal - aVal
-    })
+    );
+  });
+});
 
-    // Pagination
-    const start = (page - 1) * limit
-    const end = start + limit
-    const paginated = allTrades.slice(start, end)
+// 3. ดึง Trades แบบ Pagination + Sorting จาก DB
+app.get('/api/runs/:id/trades/:symbol', (req, res) => {
+  const { id, symbol } = req.params;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  const sort = req.query.sort || 'holding_minutes';
+  const order = req.query.order === 'asc' ? 'ASC' : 'DESC';
 
-    res.json({
-      trades: paginated,
-      total: allTrades.length,
-      page,
-      limit,
-      totalPages: Math.ceil(allTrades.length / limit)
-    })
-  } catch (error) {
-    res.status(500).json({ error: error.message })
-  }
-})
+  const sortCols = {
+    'index': 't.id', 'side': 't.side', 'open_time': 't.open_time',
+    'ep': 't.ep', 'dca_count': 't.dca_count', 'pnl_usd': 't.pnl_usd',
+    'holding_minutes': 't.holding_minutes', 'close_reason': 't.close_reason'
+  };
+  const sortCol = sortCols[sort] || 't.open_time';
 
-app.listen(PORT, () => console.log(`🚀 Backend API on port ${PORT}`))
+  const ddb = openDb();
+  
+  getRunTimestamp(id, (runTimestamp) => {
+    if (!runTimestamp) return res.status(404).json({ error: 'No run found' });
+
+    ddb.get(
+      `SELECT COUNT(*) as total FROM trades t 
+       INNER JOIN runs r ON t.run_id = r.id
+       WHERE r.run_timestamp = ? AND t.symbol = ?`,
+      [runTimestamp, symbol],
+      (err, countRow) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        const total = countRow?.total || 0;
+        const offset = (page - 1) * limit;
+        
+        ddb.all(
+          `SELECT t.* FROM trades t
+           INNER JOIN runs r ON t.run_id = r.id
+           WHERE r.run_timestamp = ? AND t.symbol = ?
+           ORDER BY ${sortCol} ${order}
+           LIMIT ? OFFSET ?`,
+          [runTimestamp, symbol, limit, offset],
+          (err2, rows) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            res.json({
+              trades: rows,
+              total,
+              page,
+              limit,
+              totalPages: Math.ceil(total / limit)
+            });
+          }
+        );
+      }
+    );
+  });
+});
+
+// 4. Fallback
+app.get('/api/runs/:id', (req, res) => {
+  const { id } = req.params;
+  
+  getRunTimestamp(id, (runTimestamp) => {
+    if (!runTimestamp) return res.status(404).json({ error: 'Run not found' });
+    
+    openDb().get(
+      `SELECT * FROM runs WHERE run_timestamp = ?`,
+      [runTimestamp],
+      (err, row) => {
+        if (err || !row) return res.status(404).json({ error: 'Run not found' });
+        res.json({
+          symbol: 'BTCUSDT',
+          run_at: row.run_timestamp,
+          stats: { total_pnl_usd: row.total_pnl_usd, max_drawdown_pct: row.max_drawdown_pct, total_trades: row.total_trades, win_rate: 100 },
+          trades_summary: { max_dca_count: row.max_dca_any_symbol, liquidations: row.total_liquidations }
+        });
+      }
+    );
+  });
+});
+
+app.listen(PORT, () => console.log(`🚀 Backend API on port ${PORT} (SQLite)`));

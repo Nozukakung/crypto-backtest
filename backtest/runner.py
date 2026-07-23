@@ -17,19 +17,82 @@ from backtest.portfolio import Portfolio, TradeLog
 
 def _auto_save_results(symbol, result, cfg):
     """บันทึกผลลัพธ์ Backtest อัตโนมัติทุกครั้งที่รันเสร็จ"""
-    import os, json
+    from backtest.db import get_conn
     from datetime import datetime
-    import shutil
-
-    results_dir = Path("results")
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = results_dir / timestamp
-    run_dir.mkdir(parents=True, exist_ok=True)
+    import json
+    import os
 
     stats = result['stats']
     trades = result['trades']
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    # 1. เขียนลง SQLite
+    conn = get_conn()
+    cursor = conn.cursor()
+    
+    # ดึงหรือสร้าง run_id
+    # หา run_id ล่าสุด หรือสร้างใหม่ถ้ายังไม่มีในนาทีนี้
+    run_timestamp_prefix = timestamp[:16] # "YYYY-MM-DD_HH-MM"
+    cursor.execute("SELECT id FROM runs WHERE run_timestamp LIKE ? LIMIT 1", (f"{run_timestamp_prefix}%",))
+    row = cursor.fetchone()
+    
+    if row:
+        run_id = row[0]
+    else:
+        import hashlib
+        config_hash = hashlib.md5(json.dumps(cfg, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        cursor.execute("""
+            INSERT INTO runs (run_timestamp, run_name, config_hash)
+            VALUES (?, ?, ?)
+        """, (timestamp, timestamp.replace('_', ' '), config_hash))
+        run_id = cursor.lastrowid
 
-    # บันทึก stats
+    # ลบข้อมูลเก่าของเหรียญนี้ใน run_id นี้ออกก่อนถ้ามี (เพื่อความปลอดภัยหากรันซ้ำในเวลาใกล้กัน)
+    cursor.execute("DELETE FROM trades WHERE run_id = ? AND symbol = ?", (run_id, symbol))
+
+    # Insert trades
+    trades_list = trades.to_dict('records')
+    for t in trades_list:
+        cursor.execute("""
+            INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            run_id,
+            symbol,
+            t.get('side'),
+            t.get('open_time'),
+            t.get('close_time'),
+            float(t.get('ep', 0)),
+            float(t.get('bep', 0)),
+            float(t.get('tp', 0)),
+            int(t.get('dca_count', 0)),
+            float(t.get('pnl_usd', 0)),
+            float(t.get('pnl_pct', 0)),
+            float(t.get('fee_usd', 0)),
+            int(t.get('holding_minutes', 0)),
+            t.get('close_reason')
+        ))
+
+    # อัปเดต aggregate stats ของ run นี้
+    cursor.execute("""
+        UPDATE runs 
+        SET 
+            total_pnl_usd = (SELECT SUM(pnl_usd) FROM trades WHERE run_id = ?),
+            total_trades = (SELECT COUNT(*) FROM trades WHERE run_id = ?),
+            total_liquidations = (SELECT SUM(CASE WHEN close_reason='LIQUIDATE' THEN 1 ELSE 0 END) FROM trades WHERE run_id = ?),
+            max_dca_any_symbol = (SELECT MAX(dca_count) FROM trades WHERE run_id = ?)
+        WHERE id = ?
+    """, (run_id, run_id, run_id, run_id, run_id))
+
+    conn.commit()
+    conn.close()
+
+    # 2. บันทึก Stats ลง JSON และ CSV เฉพาะ latest/ (เพื่อ backward compatibility กับ CLI query_results.py)
+    results_dir = Path("results")
+    latest_dir = results_dir / "latest"
+    latest_dir.mkdir(parents=True, exist_ok=True)
+    
+    # คำนวณ StatsData
     stats_data = {
         "symbol": symbol,
         "run_at": datetime.now().isoformat(),
@@ -68,22 +131,13 @@ def _auto_save_results(symbol, result, cfg):
         },
     }
 
-    with open(run_dir / f"{symbol}_stats.json", "w") as f:
-        json.dump(stats_data, f, indent=2, ensure_ascii=False)
-
-    # บันทึก trades CSV
-    export_cols = ['symbol', 'side', 'open_time', 'close_time', 'ep', 'bep', 'tp',
-                   'dca_count', 'pnl_usd', 'pnl_pct', 'fee_usd', 'holding_minutes', 'close_reason']
-    trades[export_cols].to_csv(run_dir / f"{symbol}_trades.csv", index=False)
-
-    # อัปเดต results/latest
-    latest_dir = results_dir / "latest"
-    latest_dir.mkdir(parents=True, exist_ok=True)
     with open(latest_dir / f"{symbol}_stats.json", "w") as f:
         json.dump(stats_data, f, indent=2, ensure_ascii=False)
-    shutil.copy2(run_dir / f"{symbol}_trades.csv", latest_dir / f"{symbol}_trades.csv")
-    with open(latest_dir / "_last_run.txt", "w") as f:
-        f.write(f"{timestamp}\n{symbol}\nPnL: ${stats_data['stats']['total_pnl_usd']:,.2f}\n")
+    
+    export_cols = ['symbol', 'side', 'open_time', 'close_time', 'ep', 'bep', 'tp',
+                   'dca_count', 'pnl_usd', 'pnl_pct', 'fee_usd', 'holding_minutes', 'close_reason']
+    trades[export_cols].to_csv(latest_dir / f"{symbol}_trades.csv", index=False)
+    
     with open(latest_dir / f"summary.json", "w") as f:
         json.dump(stats_data, f, indent=2, ensure_ascii=False)
 
@@ -92,7 +146,7 @@ def _auto_save_results(symbol, result, cfg):
     liq = stats_data['trades_summary']['liquidations']
     max_dca = stats_data['trades_summary']['max_dca_count']
     trades_count = stats_data['stats']['total_trades']
-    print(f"💾 Saved: {run_dir.name}/ | PnL ${pnl:>8,.2f} | DD {dd:.2f}% | Max DCA {max_dca} | Liq {liq} | Trades {trades_count}")
+    print(f"💾 Saved to SQLite + latest/ | PnL ${pnl:>8,.2f} | DD {dd:.2f}% | Max DCA {max_dca} | Liq {liq} | Trades {trades_count}")
 
 
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "strategy.yaml"
