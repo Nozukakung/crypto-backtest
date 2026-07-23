@@ -103,7 +103,7 @@ echo -e "✨ Dashboard is running!"
 echo -e "======================================${NC}"
 echo -e "📊 Backend API:  http://localhost:5001"
 echo -e "🌐 Frontend:     http://localhost:5173"
-echo -e "📁 Data source:  $PROJECT_DIR/results/latest/"
+echo -e "📁 Data source:  $PROJECT_DIR/results/backtest.db (SQLite)"
 echo -e "\n${YELLOW}Press ENTER or close this window to stop...${NC}"
 
 # รอผู้ใช้กด Enter (หรือปิด terminal)
