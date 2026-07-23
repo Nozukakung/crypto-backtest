@@ -68,6 +68,10 @@ cleanup() {
 
 trap cleanup INT TERM EXIT
 
+# ฆ่า process ค้างที่พอร์ต 5001 (ถ้ามี)
+lsof -ti :5001 | xargs -r kill -9 2>/dev/null || true
+sleep 1
+
 # 1. เริ่ม Backend
 echo -e "${GREEN}▶ Starting Backend API (port 5001)...${NC}"
 cd "$BACKEND_DIR"
