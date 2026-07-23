@@ -14,6 +14,7 @@ const SummaryTable: React.FC<Props> = ({ data, symbol }) => {
   const tradeSummary = data.trades_summary
   const margin = data.margin_analysis
   const sideBreak = data.side_breakdown || {}
+  const distance = data.distance_analysis || {}
 
   return (
     <div className="summary-section">
@@ -65,6 +66,18 @@ const SummaryTable: React.FC<Props> = ({ data, symbol }) => {
             <tbody>
               <tr><td>Max Margin Used:</td><td>${margin.max_margin_used_usd?.toLocaleString()}</td></tr>
               <tr><td>Free Margin:</td><td>${margin.free_margin_remaining?.toLocaleString()}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {distance && (
+        <div className="distance-summary">
+          <h3>Max Drag (Distance from BEP)</h3>
+          <table>
+            <tbody>
+              <tr><td>Max Drag:</td><td className={distance.max_distance_pct > 15 ? 'danger' : 'safe'}><strong>{distance.max_distance_pct?.toFixed(2)}%</strong></td></tr>
+              <tr><td>Avg Drag:</td><td>{distance.avg_distance_pct?.toFixed(2)}%</td></tr>
             </tbody>
           </table>
         </div>

@@ -15,6 +15,47 @@ import numpy as np
 import pandas as pd
 
 
+def compute_bollinger_bands(close, period=20, num_std=2.0):
+    """Bollinger Bands: Upper, Middle (SMA), Lower"""
+    close_series = pd.Series(close)
+    middle = close_series.rolling(period).mean()
+    std = close_series.rolling(period).std()
+    upper = middle + (std * num_std)
+    lower = middle - (std * num_std)
+    return upper.values, middle.values, lower.values
+
+
+def compute_adx(high, low, close, period=14):
+    """ADX (Average Directional Index) วัดความแรงของเทรนด์"""
+    high_series = pd.Series(high)
+    low_series = pd.Series(low)
+    close_series = pd.Series(close)
+
+    # True Range
+    tr1 = high_series - low_series
+    tr2 = (high_series - close_series.shift(1)).abs()
+    tr3 = (low_series - close_series.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    # Directional Movement
+    up_move = high_series - high_series.shift(1)
+    down_move = low_series.shift(1) - low_series
+
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=high_series.index)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=high_series.index)
+
+    # Smoothed averages (Wilder's)
+    atr = tr.ewm(alpha=1.0/period, adjust=False).mean()
+    plus_di = 100 * (plus_dm.ewm(alpha=1.0/period, adjust=False).mean() / atr)
+    minus_di = 100 * (minus_dm.ewm(alpha=1.0/period, adjust=False).mean() / atr)
+
+    # DX and ADX
+    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+    adx = dx.ewm(alpha=1.0/period, adjust=False).mean()
+
+    return adx.values, plus_di.values, minus_di.values
+
+
 def compute_rsi(close, period=14):
     """RSI แบบ Wilder's"""
     close_series = pd.Series(close)

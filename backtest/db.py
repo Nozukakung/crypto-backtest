@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS trades (
     fee_usd REAL,
     holding_minutes INTEGER,
     close_reason TEXT,
+    max_distance_pct REAL DEFAULT 0.0,
     FOREIGN KEY (run_id) REFERENCES runs(id)
 );
 
@@ -101,8 +102,8 @@ def save_run(symbols: List[str], results: Dict[str, Any], cfg: Dict, timestamp: 
     # Insert trades
     for t in all_trades:
         cursor.execute("""
-            INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason, max_distance_pct)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             run_id,
             t.get('symbol'),
@@ -117,7 +118,8 @@ def save_run(symbols: List[str], results: Dict[str, Any], cfg: Dict, timestamp: 
             float(t.get('pnl_pct', 0)),
             float(t.get('fee_usd', 0)),
             int(t.get('holding_minutes', 0)),
-            t.get('close_reason')
+            t.get('close_reason'),
+            float(t.get('max_distance_pct', 0)),
         ))
     
     conn.commit()
@@ -227,7 +229,8 @@ def get_trades(run_id: int, symbol: str, page: int = 1, limit: int = 50, sort: s
         'dca_count': 't.dca_count',
         'pnl_usd': 't.pnl_usd',
         'holding_minutes': 't.holding_minutes',
-        'close_reason': 't.close_reason'
+        'close_reason': 't.close_reason',
+        'max_distance_pct': 't.max_distance_pct'
     }
     
     sort_col = sort_cols.get(sort, 't.open_time')
@@ -241,7 +244,7 @@ def get_trades(run_id: int, symbol: str, page: int = 1, limit: int = 50, sort: s
     cursor = conn.execute(f"""
         SELECT 
             t.id, t.symbol, t.side, t.open_time, t.close_time, t.ep, t.bep, t.tp,
-            t.dca_count, t.pnl_usd, t.pnl_pct, t.fee_usd, t.holding_minutes, t.close_reason
+            t.dca_count, t.pnl_usd, t.pnl_pct, t.fee_usd, t.holding_minutes, t.close_reason, t.max_distance_pct
         FROM trades t
         WHERE t.run_id = ? AND t.symbol = ?
         ORDER BY {sort_col} {order_dir}

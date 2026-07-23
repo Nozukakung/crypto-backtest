@@ -39,6 +39,7 @@ class Position:
         self.dca_disabled_at_minutes = None
         self.last_dca_price = 0.0
         self.dca_disabled_at = None  # เวลาที่หยุดถัว (สำหรับ Cut Loss Timer)
+        self.max_distance_pct = 0.0  # ระยะห่างสูงสุดจาก BEP (เป็น %)
 
         # DCA Parameters
         self.dca_base_distance_pct = config.get("dca_trigger_below_bep_percent", 0.3) / 100.0
@@ -103,15 +104,15 @@ class Position:
     @property
     def take_profit_price(self):
         """Dynamic TP: ยิ่งถัวมาก ยิ่ง TP เร็วขึ้น เพื่อคืน margin ไว"""
-        base_tp = self.config.get("take_profit_above_bep_percent", 0.2)
+        base_tp = self.config.get("take_profit_above_bep_percent", 0.5)
         
-        # Dynamic TP ตาม DCA count
-        if self.dca_count <= 20:
-            tp_pct = base_tp                # 0.2% (default)
-        elif self.dca_count <= 50:
-            tp_pct = 0.15                   # 0.15%
-        elif self.dca_count <= 80:
-            tp_pct = 0.10                   # 0.10%
+        # Dynamic TP ตาม DCA count (ลดหลั่นจาก base_tp 0.5% ลงมา)
+        if self.dca_count <= 50:
+            tp_pct = base_tp                # 0.5% (default)
+        elif self.dca_count <= 150:
+            tp_pct = base_tp * 0.80         # 0.4%
+        elif self.dca_count <= 300:
+            tp_pct = base_tp * 0.50         # 0.25%
         else:
             tp_pct = 0.05                   # 0.05% (ถัวเยอะมาก → TP นิดเดียวก็พอ)
         

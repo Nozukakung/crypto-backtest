@@ -23,6 +23,7 @@ class TradeLog:
     fee_usd: float
     holding_minutes: int
     close_reason: str
+    max_distance_pct: float = 0.0  # ระยะห่างสูงสุดจาก BEP (เป็น %)
 
 
 class Portfolio:
@@ -97,5 +98,6 @@ class Portfolio:
                 "pnl_usd": t.pnl_usd, "pnl_pct": t.pnl_pct,
                 "fee_usd": t.fee_usd, "holding_minutes": t.holding_minutes,
                 "close_reason": t.close_reason,
+                "max_distance_pct": t.max_distance_pct,
             } for t in self.trade_logs
         ])

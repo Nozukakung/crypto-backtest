@@ -5,28 +5,34 @@ strategy:
   timeframe: "1m"
   initial_capital: 50000.0          # พอร์ต $50K ตามตาเล็ก
   leverage: 10
-  size_per_trade_usd: 200.0         # ไม้ละ $200
+  size_per_trade_usd: 100.0         # ไม้ละ $100
   max_positions: 1
 
 signal:
   rsi_period: 14
   rsi_long_threshold: 40.0         # ปล่อยกว้างขึ้น
   rsi_short_threshold: 60.0        # ปล่อยกว้างขึ้น
+  
+  # BB & ADX Filters
+  bb_period: 20                    # Bollinger Bands period
+  bb_std: 2.0                      # Bollinger Bands standard deviation
+  adx_period: 14                   # ADX period
+  adx_trend_limit: 25.0            # ไม่เทรดถ้า ADX > 25 (มีเทรนด์แรง)
 
 order:
   price_offset_percent: 0.05
   fee_rate_maker: 0.02
   fee_rate_taker: 0.045
 
-  take_profit_above_bep_percent: 0.2   # TP 0.2%
+  take_profit_above_bep_percent: 0.5   # Dynamic TP Start 0.5%
 
 position:
   dca_trigger_below_bep_percent: 0.3
   dca_multiplier: 1.0
-  dca_max_cap_usd: 25000.0         # Cap $25K (margin $2,500 ที่ 10x)
-  long_timeout_minutes: 99999999     # ปิด Timeout
-  short_timeout_minutes: 99999999    # ปิด Timeout
-  cutloss_after_stop_minutes: 99999999 # ปิด Cut Loss
+  dca_max_cap_usd: 50000.0         # Cap $50K (margin $5,000 ที่ 10x)
+  long_timeout_minutes: 9999999     # ไม่มี Timeout (ตาเล็กต้นฉบับ)
+  short_timeout_minutes: 9999999    # ไม่มี Timeout (ตาเล็กต้นฉบับ)
+  cutloss_after_stop_minutes: 9999999  # ปิด Cut Loss (ไม่ตัดขาดทุน)
   monitor_interval_minutes: 5
   cooldown_minutes: 5
   funding_rate_per_8h: 0.01

@@ -79,7 +79,9 @@ app.get('/api/runs/:id/stats/:symbol', (req, res) => {
           SUM(CASE WHEN t.side = 'LONG' THEN t.pnl_usd ELSE 0 END) as long_pnl,
           SUM(CASE WHEN t.side = 'SHORT' THEN t.pnl_usd ELSE 0 END) as short_pnl,
           MAX(CASE WHEN t.side = 'LONG' THEN t.dca_count ELSE 0 END) as long_max_dca,
-          MAX(CASE WHEN t.side = 'SHORT' THEN t.dca_count ELSE 0 END) as short_max_dca
+          MAX(CASE WHEN t.side = 'SHORT' THEN t.dca_count ELSE 0 END) as short_max_dca,
+          MAX(t.max_distance_pct) as max_distance_pct,
+          AVG(t.max_distance_pct) as avg_distance_pct
        FROM runs r
        INNER JOIN trades t ON t.run_id = r.id
        WHERE r.run_timestamp = ? AND t.symbol = ?
@@ -117,6 +119,10 @@ app.get('/api/runs/:id/stats/:symbol', (req, res) => {
           side_breakdown: {
             long: { count: row.long_count, pnl: row.long_pnl, max_dca: row.long_max_dca },
             short: { count: row.short_count, pnl: row.short_pnl, max_dca: row.short_max_dca }
+          },
+          distance_analysis: {
+            max_distance_pct: row.max_distance_pct || 0,
+            avg_distance_pct: row.avg_distance_pct || 0
           }
         });
       }
@@ -135,7 +141,8 @@ app.get('/api/runs/:id/trades/:symbol', (req, res) => {
   const sortCols = {
     'index': 't.id', 'side': 't.side', 'open_time': 't.open_time',
     'ep': 't.ep', 'dca_count': 't.dca_count', 'pnl_usd': 't.pnl_usd',
-    'holding_minutes': 't.holding_minutes', 'close_reason': 't.close_reason'
+    'holding_minutes': 't.holding_minutes', 'close_reason': 't.close_reason',
+    'max_distance_pct': 't.max_distance_pct'
   };
   const sortCol = sortCols[sort] || 't.open_time';
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from data.store import load_parquet
-from engine.indicators import compute_rsi, compute_candle_features, detect_candle_patterns
+from engine.indicators import compute_rsi, compute_bollinger_bands, compute_adx, compute_candle_features, detect_candle_patterns
 from engine.position import Position
 from backtest.portfolio import Portfolio, TradeLog
 
@@ -149,18 +149,31 @@ def run_backtest(symbol, cfg=None):
     # ====== Compute signals ======
     print(f"   Computing signals...")
     df["rsi"] = compute_rsi(df["close"].values, signal_cfg.get("rsi_period", 14))
+    
+    # คำนวณ Bollinger Bands (BB)
+    bb_period = signal_cfg.get("bb_period", 20)
+    bb_std = signal_cfg.get("bb_std", 2.0)
+    df["bb_upper"], df["bb_middle"], df["bb_lower"] = compute_bollinger_bands(df["close"].values, bb_period, bb_std)
+    
+    # คำนวณ ADX
+    adx_period = signal_cfg.get("adx_period", 14)
+    df["adx"], _, _ = compute_adx(df["high"].values, df["low"].values, df["close"].values, adx_period)
+    
     df = compute_candle_features(df)
     df = detect_candle_patterns(df)
 
     rsi_long = signal_cfg.get("rsi_long_threshold", 40.0)
     rsi_short = signal_cfg.get("rsi_short_threshold", 60.0)
+    adx_limit = signal_cfg.get("adx_trend_limit", 25.0)
 
-    df["signal_long"] = (df["rsi"] < rsi_long)
-    df["signal_short"] = (df["rsi"] > rsi_short)
+    # LONG Condition: RSI < 40 และ Close < BB Lower และ ADX < 25 (ไม่มีเทรนด์แรง)
+    # SHORT Condition: RSI > 60 และ Close > BB Upper และ ADX < 25 (ไม่มีเทรนด์แรง)
+    df["signal_long"] = (df["rsi"] < rsi_long) & (df["close"] < df["bb_lower"]) & (df["adx"] < adx_limit)
+    df["signal_short"] = (df["rsi"] > rsi_short) & (df["close"] > df["bb_upper"]) & (df["adx"] < adx_limit)
 
     long_count = int(df["signal_long"].sum())
     short_count = int(df["signal_short"].sum())
-    print(f"   Long: {long_count:,} | Short: {short_count:,}")
+    print(f"   Signals computed: LONG={long_count:,} | SHORT={short_count:,} (ADX limit {adx_limit})")
 
     # ====== Simulate ======
     portfolio = Portfolio(initial_capital=capital)
@@ -212,20 +225,30 @@ def run_backtest(symbol, cfg=None):
         if position is not None and position.status == "OPEN":
             position.update_time()
             side = position.side
+            
+            # คำนวณ max_distance_pct จาก BEP (ใช้ high/low ของแท่งปัจจุบัน)
+            if side == "LONG":
+                dist = (position.bep - l) / position.bep * 100  # ลากลงจาก BEP
+            else:
+                dist = (h - position.bep) / position.bep * 100  # ลากขึ้นจาก BEP
+            if dist > position.max_distance_pct:
+                position.max_distance_pct = dist
 
             # 1) Liquidation Check
             if position.check_liquidation(l if side == "LONG" else h, portfolio.capital):
-                loss_usd = position.margin_used
-                position.liquidate(ts, position.liquidation_price, fee_rate)
+                liq_price = position.liquidation_price
+                position.liquidate(ts, liq_price, fee_rate)
+                pnl = position.pnl(liq_price)
                 portfolio.record_trade(TradeLog(
                     symbol=symbol, side=side,
                     open_time=position.records[0].timestamp, close_time=ts,
                     ep=position.entry_price, bep=position.bep,
                     tp=position.take_profit_price, dca_count=position.dca_count,
-                    pnl_usd=round(-loss_usd, 2),
-                    pnl_pct=round(-100.0, 4),
+                    pnl_usd=round(pnl, 2),
+                    pnl_pct=round(pnl / position.total_size_usd * 100, 4),
                     fee_usd=round(position.total_fees_usd, 2),
                     holding_minutes=position.holding_time_minutes,
+                    max_distance_pct=round(position.max_distance_pct, 4),
                     close_reason="LIQUIDATE",
                 ))
                 portfolio.update_equity(ts)
@@ -249,6 +272,7 @@ def run_backtest(symbol, cfg=None):
                     pnl_pct=round(pnl / position.total_size_usd * 100, 4),
                     fee_usd=round(position.total_fees_usd, 2),
                     holding_minutes=position.holding_time_minutes,
+                    max_distance_pct=round(position.max_distance_pct, 4),
                     close_reason="TP",
                 ))
                 portfolio.update_equity(ts)
@@ -271,6 +295,7 @@ def run_backtest(symbol, cfg=None):
                     pnl_pct=round(pnl / position.total_size_usd * 100, 4),
                     fee_usd=round(position.total_fees_usd, 2),
                     holding_minutes=position.holding_time_minutes,
+                    max_distance_pct=round(position.max_distance_pct, 4),
                     close_reason="TP",
                 ))
                 portfolio.update_equity(ts)
@@ -297,10 +322,11 @@ def run_backtest(symbol, cfg=None):
                     position.dca_disabled = True
                     position.dca_disabled_at = ts
 
-                # 3.3) Cut Loss: เช็คเวลาหลังหยุดถัว เกิน X นาที (เฉพาะกรณี Timeout จริง)
-                # ถ้า cutloss_minutes = 0 → ปิดทันทีเมื่อ Timeout (ไม่ใช่เมื่อ Cap)
-                if position.dca_disabled and position.dca_disabled_at is not None and timeout_hit:
-                    # คำนวณความต่างเวลา (ใช้ holding_minutes หลังหยุดถัวเทียบ)
+                # 3.3) Cut Loss: เช็คเวลาหลังหยุดถัว เกิน 24 ชม. (1440 นาที) หรือไม่
+                if position.dca_disabled and position.dca_disabled_at is not None:
+                    # คำนวณความต่างเวลา (เนื่องจาก timestamp เป็น string/datetime เราใช้ holding_minutes หลังหยุดถัวเทียบง่ายกว่า)
+                    # โดย dca_disabled_at เกิดที่ holding_minutes เท่าไหร่ -> ถ้าห่างเกิน 1440 นาที -> Cut Loss
+                    # เพื่อความเป๊ะ เราบันทึกเวลาหยุดถัวโดยใช้ holding_minutes เป็นเกณฑ์
                     if not hasattr(position, "dca_disabled_at_minutes") or position.dca_disabled_at_minutes is None:
                         position.dca_disabled_at_minutes = position.holding_time_minutes
 
@@ -318,7 +344,8 @@ def run_backtest(symbol, cfg=None):
                             pnl_pct=round(pnl / position.total_size_usd * 100, 4),
                             fee_usd=round(position.total_fees_usd, 2),
                             holding_minutes=position.holding_time_minutes,
-                            close_reason="CUTLOSS",
+                            max_distance_pct=round(position.max_distance_pct, 4),
+                    close_reason="CUTLOSS",
                         ))
                         portfolio.update_equity(ts)
                         position = None
@@ -427,7 +454,8 @@ def run_backtest(symbol, cfg=None):
             pnl_pct=round(pnl / position.total_size_usd * 100, 4),
             fee_usd=round(position.total_fees_usd, 2),
             holding_minutes=position.holding_time_minutes,
-            close_reason="END",
+            max_distance_pct=round(position.max_distance_pct, 4),
+                    close_reason="END",
         ))
         portfolio.update_equity(last_ts)
 

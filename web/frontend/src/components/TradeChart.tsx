@@ -180,6 +180,7 @@ const TradeChart: React.FC<Props> = ({
               <th onClick={() => toggleSort('pnl_usd')} className="sortable">PnL{sortIndicator('pnl_usd')}</th>
               <th onClick={() => toggleSort('holding_minutes')} className="sortable">Hold Time{sortIndicator('holding_minutes')}</th>
               <th onClick={() => toggleSort('close_reason')} className="sortable">Reason{sortIndicator('close_reason')}</th>
+              <th onClick={() => toggleSort('max_distance_pct')} className="sortable">Max Drag{sortIndicator('max_distance_pct')}</th>
             </tr>
           </thead>
           <tbody>
@@ -197,6 +198,9 @@ const TradeChart: React.FC<Props> = ({
                   {formatHoldingTime(t.holding_minutes)}
                 </td>
                 <td>{t.close_reason}</td>
+                <td className={parseFloat(t.max_distance_pct || 0) > 15 ? 'danger' : parseFloat(t.max_distance_pct || 0) > 8 ? 'hold-warn' : ''}>
+                  {parseFloat(t.max_distance_pct || 0).toFixed(2)}%
+                </td>
               </tr>
             ))}
           </tbody>
