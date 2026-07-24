@@ -24,6 +24,27 @@ class TradeLog:
     holding_minutes: int
     close_reason: str
     max_distance_pct: float = 0.0  # ระยะห่างสูงสุดจาก BEP (เป็น %)
+    entry_score: float = 0.0  # คะแนน indicator ตอนเข้าไม้แรก
+
+    def to_sql_values(self, run_id):
+        return (
+            run_id,
+            self.symbol,
+            self.side,
+            self.open_time,
+            self.close_time,
+            self.ep,
+            self.bep,
+            self.tp,
+            self.dca_count,
+            self.pnl_usd,
+            self.pnl_pct,
+            self.fee_usd,
+            self.holding_minutes,
+            self.close_reason,
+            self.max_distance_pct,
+            self.entry_score,
+        )
 
 
 class Portfolio:
@@ -99,5 +120,6 @@ class Portfolio:
                 "fee_usd": t.fee_usd, "holding_minutes": t.holding_minutes,
                 "close_reason": t.close_reason,
                 "max_distance_pct": t.max_distance_pct,
+                "entry_score": t.entry_score,
             } for t in self.trade_logs
         ])

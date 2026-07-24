@@ -1,42 +1,73 @@
-# config/strategy.yaml — ตาเล็กจริง RSI Only + พอร์ต $50K ค้ำ Cross Margin
+# config/strategy.yaml — RSI + BB Only, $200/ไม้
 strategy:
-  name: "Mean Reversion + DCA (ตาเล็ก RSI Only)"
+  name: "Mean Reversion + DCA (Score System)"
   type: "crypto_futures"
   timeframe: "1m"
-  initial_capital: 50000.0          # พอร์ต $50K ตามตาเล็ก
+  initial_capital: 2000.0          # พอร์ต $2K
   leverage: 10
-  size_per_trade_usd: 100.0         # ไม้ละ $100
+  size_per_trade_usd: 15.0        # ไม้ละ $15
   max_positions: 1
 
 signal:
-  rsi_period: 14
-  rsi_long_threshold: 40.0         # ปล่อยกว้างขึ้น
-  rsi_short_threshold: 60.0        # ปล่อยกว้างขึ้น
+  # ── Score Settings ──
+  score_threshold: 8.0              # เกณฑ์ขั้นต่ำในการเปิดไม้แรก
   
-  # BB & ADX Filters
-  bb_period: 20                    # Bollinger Bands period
-  bb_std: 2.0                      # Bollinger Bands standard deviation
-  adx_period: 14                   # ADX period
-  adx_trend_limit: 25.0            # ไม่เทรดถ้า ADX > 25 (มีเทรนด์แรง)
+  # ── RSI ──
+  rsi_enabled: true
+  rsi_period: 14
+  rsi_long_threshold: 40.0
+  rsi_short_threshold: 60.0
+  
+  # ── Bollinger Bands ──
+  bb_enabled: true
+  bb_period: 20
+  bb_std: 2.0
+  
+  # ── ADX ──
+  adx_enabled: true
+  adx_period: 14
+  adx_trend_limit: 20.0
+  
+  # ── EMA ──
+  ema_enabled: true
+  ema_period: 10080
+  
+  # ── IBS ──
+  ibs_enabled: true
+  rsi_fast_period: 2
+  ibs_long_threshold: 0.1
+  ibs_short_threshold: 0.9
+  
+  # ── Volume Spike ──
+  vol_spike_enabled: true
+  volume_spike_multiplier: 2.0
+
+  # ── Weights (ผลรวมควรเป็น 10) ──
+  weights:
+    bb: 3.0
+    rsi: 2.0
+    ibs: 2.0
+    vol_spike: 1.5
+    adx: 1.0
+    ema: 0.5
 
 order:
   price_offset_percent: 0.05
   fee_rate_maker: 0.02
   fee_rate_taker: 0.045
-
-  take_profit_above_bep_percent: 0.5   # Dynamic TP Start 0.5%
+  take_profit_above_bep_percent: 1.0
 
 position:
   dca_trigger_below_bep_percent: 0.3
   dca_multiplier: 1.0
-  dca_max_cap_usd: 50000.0         # Cap $50K (margin $5,000 ที่ 10x)
-  long_timeout_minutes: 9999999     # ไม่มี Timeout (ตาเล็กต้นฉบับ)
-  short_timeout_minutes: 9999999    # ไม่มี Timeout (ตาเล็กต้นฉบับ)
-  cutloss_after_stop_minutes: 9999999  # ปิด Cut Loss (ไม่ตัดขาดทุน)
+  dca_max_cap_usd: 85000.0
+  long_timeout_minutes: 9999999
+  short_timeout_minutes: 9999999
+  cutloss_after_stop_minutes: 9999999
   monitor_interval_minutes: 5
   cooldown_minutes: 5
   funding_rate_per_8h: 0.01
 
 risk:
-  max_position_per_pair: 50000.0
+  max_position_per_pair: 85000.0
   max_drawdown_alert_percent: 30.0

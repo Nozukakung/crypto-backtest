@@ -39,7 +39,9 @@ class Position:
         self.dca_disabled_at_minutes = None
         self.last_dca_price = 0.0
         self.dca_disabled_at = None  # เวลาที่หยุดถัว (สำหรับ Cut Loss Timer)
-        self.max_distance_pct = 0.0  # ระยะห่างสูงสุดจาก BEP (เป็น %)
+        self.max_distance_pct = 0.0  # ระยะห่างสูงสุดจากราคาเข้าไม้แรก (เป็น %)
+        self.first_entry_price = 0.0  # EP ไม้แรก (ไม่เปลี่ยนตาม DCA)
+        self.entry_score = 0.0        # เก็บคะแนนตัวชี้วัด ณ ตอนเปิดไม้แรก
 
         # DCA Parameters
         self.dca_base_distance_pct = config.get("dca_trigger_below_bep_percent", 0.3) / 100.0
@@ -52,6 +54,8 @@ class Position:
         
         # 2) คำนวณ qty ตาม Lot Size
         qty = calculate_qty_for_notional(self.symbol, target_size_usd, price)
+        if len(self.records) == 0:
+            self.first_entry_price = price
         
         # 3) มูลค่าจริงที่สั่ง (หลังปัดเศษ)
         actual_size_usd = calculate_actual_notional(self.symbol, qty, price)
@@ -103,19 +107,12 @@ class Position:
 
     @property
     def take_profit_price(self):
-        """Dynamic TP: ยิ่งถัวมาก ยิ่ง TP เร็วขึ้น เพื่อคืน margin ไว"""
-        base_tp = self.config.get("take_profit_above_bep_percent", 0.5)
-        
-        # Dynamic TP ตาม DCA count (ลดหลั่นจาก base_tp 0.5% ลงมา)
-        if self.dca_count <= 50:
-            tp_pct = base_tp                # 0.5% (default)
-        elif self.dca_count <= 150:
-            tp_pct = base_tp * 0.80         # 0.4%
-        elif self.dca_count <= 300:
-            tp_pct = base_tp * 0.50         # 0.25%
-        else:
-            tp_pct = 0.05                   # 0.05% (ถัวเยอะมาก → TP นิดเดียวก็พอ)
-        
+        """
+        DCA Step-Up TP: ทุก 10 ไม้ เพิ่ม 0.1%
+        เริ่ม 0.8% | สูงสุด 5.0%
+        สูตร: tp_pct = min(5.0, 0.8 + (self.dca_count // 10) * 0.1)
+        """
+        tp_pct = min(5.0, 0.8 + (self.dca_count // 10) * 0.1)
         tp_offset = tp_pct / 100.0
         if self.side == "LONG":
             tp = self.bep * (1.0 + tp_offset)
@@ -136,25 +133,24 @@ class Position:
             required_margin = size_per_trade / self.leverage
             if free_margin < required_margin:
                 return False
-        else:
-            if self.total_size_usd >= self.dca_max_cap_usd:
-                return False
-
         # มัดรวม = หยุดถัว (Timeout แล้ว)
         if self.dca_disabled:
             return False
 
-        # 2) เช็ค Grid: ราคาต้องห่างจาก BEP > 0.3%
+        # 2) เช็ค Grid: ราคาปัจจุบันต้องห่างจากไม้ล่าสุด (last_dca_price) 0.3% คงที่
+        # ทุกครั้งที่ถัวสำเร็จ ไม้ถัดไปจะตั้งรับห่างลงไปอีก 0.3% จากไม้ล่าสุดทันที
+        expected_distance = self.dca_base_distance_pct  # 0.3% คงที่
+        
         if self.side == "LONG":
-            if current_price >= self.bep:
+            if current_price >= self.last_dca_price:
                 return False
-            pct_under = (self.bep - current_price) / self.bep
-            return pct_under > self.current_dca_distance_pct
+            pct_under = (self.last_dca_price - current_price) / self.last_dca_price
+            return pct_under >= expected_distance
         else:
-            if current_price <= self.bep:
+            if current_price <= self.last_dca_price:
                 return False
-            pct_above = (current_price - self.bep) / self.bep
-            return pct_above > self.current_dca_distance_pct
+            pct_above = (current_price - self.last_dca_price) / self.last_dca_price
+            return pct_above >= expected_distance
 
     def update_liquidation_price(self, portfolio_equity=0.0):
         """Cross Margin: Liq เมื่อ Unrealized Loss ≥ $25,000 (Buffer $25K)

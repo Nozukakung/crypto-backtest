@@ -15,6 +15,11 @@ import numpy as np
 import pandas as pd
 
 
+def compute_ema(close, period):
+    """EMA แบบ Wilder (pandas ewm)"""
+    return pd.Series(close).ewm(span=period, adjust=False).mean().values
+
+
 def compute_bollinger_bands(close, period=20, num_std=2.0):
     """Bollinger Bands: Upper, Middle (SMA), Lower"""
     close_series = pd.Series(close)
@@ -140,3 +145,20 @@ def detect_all_patterns(df):
     df = compute_candle_features(df)
     df = detect_candle_patterns(df)
     return df
+
+
+def compute_ibs(high, low, close):
+    """IBS (Internal Bar Strength) = (Close - Low) / (High - Low)
+    ค่า 0-1, ต่ำ = ปิดใกล้ Low = Exhaustion selling"""
+    h = pd.Series(high)
+    l = pd.Series(low)
+    c = pd.Series(close)
+    rng = (h - l).replace(0, np.nan)
+    return ((c - l) / rng).values
+
+
+def compute_volume_spike(volume, period=20, multiplier=2.0):
+    """Volume Spike: Volume > multiplier × เฉลี่ย period แท่งที่ผ่านมา"""
+    vol = pd.Series(volume)
+    avg_vol = vol.rolling(period, min_periods=period).mean()
+    return (vol > avg_vol * multiplier).values

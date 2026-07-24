@@ -102,8 +102,8 @@ def save_run(symbols: List[str], results: Dict[str, Any], cfg: Dict, timestamp: 
     # Insert trades
     for t in all_trades:
         cursor.execute("""
-            INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason, max_distance_pct)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason, max_distance_pct, entry_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             run_id,
             t.get('symbol'),
@@ -120,6 +120,7 @@ def save_run(symbols: List[str], results: Dict[str, Any], cfg: Dict, timestamp: 
             int(t.get('holding_minutes', 0)),
             t.get('close_reason'),
             float(t.get('max_distance_pct', 0)),
+            float(t.get('entry_score', 0)),
         ))
     
     conn.commit()

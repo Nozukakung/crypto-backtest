@@ -10,7 +10,7 @@ from pathlib import Path
 from tqdm import tqdm
 
 from data.store import load_parquet
-from engine.indicators import compute_rsi, compute_bollinger_bands, compute_adx, compute_candle_features, detect_candle_patterns
+from engine.indicators import compute_rsi, compute_bollinger_bands, compute_adx, compute_ema, compute_ibs, compute_volume_spike, compute_candle_features, detect_candle_patterns
 from engine.position import Position
 from backtest.portfolio import Portfolio, TradeLog
 
@@ -47,8 +47,8 @@ def _auto_save_results(symbol, result, cfg):
         """, (timestamp, timestamp.replace('_', ' '), config_hash))
         run_id = cursor.lastrowid
 
-    # ลบข้อมูลเก่าของเหรียญนี้ใน run_id นี้ออกก่อนถ้ามี (เพื่อความปลอดภัยหากรันซ้ำในเวลาใกล้กัน)
-    cursor.execute("DELETE FROM trades WHERE run_id = ? AND symbol = ?", (run_id, symbol))
+    # ลบข้อมูลเก่าของเหรียญนี้ทุก run_id (ไม่ให้ DB บวมจากการรันซ้ำหลายรอบ)
+    cursor.execute("DELETE FROM trades WHERE symbol = ?", (symbol,))
 
     # Insert trades
     trades_list = trades.to_dict('records')
@@ -58,8 +58,8 @@ def _auto_save_results(symbol, result, cfg):
         close_t = str(t.get('close_time')) if t.get('close_time') is not None else ''
         
         cursor.execute("""
-            INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO trades (run_id, symbol, side, open_time, close_time, ep, bep, tp, dca_count, pnl_usd, pnl_pct, fee_usd, holding_minutes, close_reason, max_distance_pct, entry_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             run_id,
             symbol,
@@ -74,7 +74,9 @@ def _auto_save_results(symbol, result, cfg):
             float(t.get('pnl_pct', 0)),
             float(t.get('fee_usd', 0)),
             int(t.get('holding_minutes', 0)),
-            t.get('close_reason')
+            t.get('close_reason'),
+            float(t.get('max_distance_pct', 0)),
+            float(t.get('entry_score', 0))
         ))
 
     # อัปเดต aggregate stats ของ run นี้
@@ -89,6 +91,13 @@ def _auto_save_results(symbol, result, cfg):
     """, (run_id, run_id, run_id, run_id, run_id))
 
     conn.commit()
+    
+    # Cleanup orphan runs (runs with no trades left)
+    cursor.execute("DELETE FROM runs WHERE id NOT IN (SELECT DISTINCT run_id FROM trades)")
+    conn.commit()
+    
+    # VACUUM ต้องอยู่นอกระบบ transaction
+    conn.execute("VACUUM")
     conn.close()
 
     pnl = float(round(stats['total_pnl_usd'], 2))
@@ -149,6 +158,17 @@ def run_backtest(symbol, cfg=None):
     # ====== Compute signals ======
     print(f"   Computing signals...")
     df["rsi"] = compute_rsi(df["close"].values, signal_cfg.get("rsi_period", 14))
+    df["rsi_fast"] = compute_rsi(df["close"].values, signal_cfg.get("rsi_fast_period", 2))
+    
+    # IBS (Internal Bar Strength)
+    df["ibs"] = compute_ibs(df["high"].values, df["low"].values, df["close"].values)
+    
+    # Volume Spike (ถ้ามี volume ข้อมูล)
+    vol_spike_mult = signal_cfg.get("volume_spike_multiplier", 2.0)
+    if "volume" in df.columns:
+        df["vol_spike"] = compute_volume_spike(df["volume"].values, period=20, multiplier=vol_spike_mult)
+    else:
+        df["vol_spike"] = False
     
     # คำนวณ Bollinger Bands (BB)
     bb_period = signal_cfg.get("bb_period", 20)
@@ -159,22 +179,103 @@ def run_backtest(symbol, cfg=None):
     adx_period = signal_cfg.get("adx_period", 14)
     df["adx"], _, _ = compute_adx(df["high"].values, df["low"].values, df["close"].values, adx_period)
     
+    # คำนวณ EMA Trend Filter
+    ema_period = signal_cfg.get("ema_period", 10080)
+    df["ema"] = compute_ema(df["close"].values, ema_period)
+    
     df = compute_candle_features(df)
     df = detect_candle_patterns(df)
 
+    # ====== READ ENABLE FLAGS ======
+    adx_enabled = signal_cfg.get("adx_enabled", True)
+    ema_enabled = signal_cfg.get("ema_enabled", True)
+    ibs_enabled = signal_cfg.get("ibs_enabled", True)
+    vol_spike_enabled = signal_cfg.get("vol_spike_enabled", True)
+
+    # ====== READ SCORE WEIGHTS & THRESHOLD ======
+    score_threshold = signal_cfg.get("score_threshold", 7.0)
+    weights_cfg = signal_cfg.get("weights", {})
+    w_bb = weights_cfg.get("bb", 3.0)
+    w_rsi = weights_cfg.get("rsi", 2.0)
+    w_ibs = weights_cfg.get("ibs", 2.0)
+    w_vol = weights_cfg.get("vol_spike", 1.5)
+    w_adx = weights_cfg.get("adx", 1.0)
+    w_ema = weights_cfg.get("ema", 0.5)
+
     rsi_long = signal_cfg.get("rsi_long_threshold", 40.0)
     rsi_short = signal_cfg.get("rsi_short_threshold", 60.0)
-    adx_limit = signal_cfg.get("adx_trend_limit", 25.0)
+    ibs_long = signal_cfg.get("ibs_long_threshold", 0.1)
+    ibs_short = signal_cfg.get("ibs_short_threshold", 0.9)
+    adx_limit = signal_cfg.get("adx_trend_limit", 20.0)
 
-    # LONG Condition: RSI < 40 และ Close < BB Lower และ ADX < 25 (ไม่มีเทรนด์แรง)
-    # SHORT Condition: RSI > 60 และ Close > BB Upper และ ADX < 25 (ไม่มีเทรนด์แรง)
-    df["signal_long"] = (df["rsi"] < rsi_long) & (df["close"] < df["bb_lower"]) & (df["adx"] < adx_limit)
-    df["signal_short"] = (df["rsi"] > rsi_short) & (df["close"] > df["bb_upper"]) & (df["adx"] < adx_limit)
+    # ====== SCORE-BASED ENTRY SYSTEM ======
+    # Base = RSI + BB (ต้องผ่านพร้อมกันแบบ boolean)
+    rsi_ok_long = df["rsi"] < rsi_long
+    rsi_ok_short = df["rsi"] > rsi_short
+    bb_ok_long = df["close"] < df["bb_lower"]
+    bb_ok_short = df["close"] > df["bb_upper"]
+
+    base_long = (rsi_ok_long.fillna(False) & bb_ok_long.fillna(False)).astype(float)
+    base_short = (rsi_ok_short.fillna(False) & bb_ok_short.fillna(False)).astype(float)
+
+    # เริ่มคำนวณคะแนน (Base: RSI + BB = w_rsi + w_bb)
+    score_long = base_long * (w_rsi + w_bb)
+    score_short = base_short * (w_rsi + w_bb)
+
+    # ADX Score (ถ้าปิดใช้งานให้ได้คะแนนเต็ม)
+    if adx_enabled:
+        adx_ok = (df["adx"] < adx_limit).fillna(False).astype(float)
+        score_long += adx_ok * w_adx
+        score_short += adx_ok * w_adx
+    else:
+        score_long += w_adx
+        score_short += w_adx
+
+    # EMA Score
+    if ema_enabled:
+        ema_ok_long = (df["close"] > df["ema"]).fillna(False).astype(float)
+        ema_ok_short = (df["close"] < df["ema"]).fillna(False).astype(float)
+        score_long += ema_ok_long * w_ema
+        score_short += ema_ok_short * w_ema
+    else:
+        score_long += w_ema
+        score_short += w_ema
+
+    # IBS Score
+    if ibs_enabled:
+        ibs_ok_long = (df["ibs"] < ibs_long).fillna(False).astype(float)
+        ibs_ok_short = (df["ibs"] > ibs_short).fillna(False).astype(float)
+        score_long += ibs_ok_long * w_ibs
+        score_short += ibs_ok_short * w_ibs
+    else:
+        score_long += w_ibs
+        score_short += w_ibs
+
+    # Volume Spike Score
+    if vol_spike_enabled:
+        vol_ok = df["vol_spike"].fillna(False).astype(float)
+        score_long += vol_ok * w_vol
+        score_short += vol_ok * w_vol
+    else:
+        score_long += w_vol
+        score_short += w_vol
+
+    # เก็บคะแนนไว้ใน DataFrame สำหรับบันทึกลง DB
+    df["entry_score_long"] = score_long
+    df["entry_score_short"] = score_short
+
+    # Final Signal: Score >= threshold AND Base must pass (base_long/base_short > 0)
+    df["signal_long"] = (score_long >= score_threshold) & (base_long > 0)
+    df["signal_short"] = (score_short >= score_threshold) & (base_short > 0)
 
     long_count = int(df["signal_long"].sum())
     short_count = int(df["signal_short"].sum())
-    print(f"   Signals computed: LONG={long_count:,} | SHORT={short_count:,} (ADX limit {adx_limit})")
-
+    active_filters = ["RSI", "BB"]
+    if adx_enabled: active_filters.append(f"ADX<{adx_limit}")
+    if ema_enabled: active_filters.append(f"EMA={ema_period}")
+    if ibs_enabled: active_filters.append("IBS")
+    if vol_spike_enabled: active_filters.append("VolSpike")
+    print(f"   Signals computed: LONG={long_count:,} | SHORT={short_count:,} (Score>={score_threshold}, {', '.join(active_filters)})")
     # ====== Simulate ======
     portfolio = Portfolio(initial_capital=capital)
     position = None
@@ -187,6 +288,8 @@ def run_backtest(symbol, cfg=None):
     closes = df["close"].values
     signal_long = df["signal_long"].values
     signal_short = df["signal_short"].values
+    entry_score_long = df["entry_score_long"].values
+    entry_score_short = df["entry_score_short"].values
 
     # สำหรับ Funding Rate (ทุก 8 ชม. = 480 นาที)
     funding_interval = 480  # นาที
@@ -226,11 +329,14 @@ def run_backtest(symbol, cfg=None):
             position.update_time()
             side = position.side
             
-            # คำนวณ max_distance_pct จาก BEP (ใช้ high/low ของแท่งปัจจุบัน)
+            # คำนวณ max_distance_pct แบบ absolute (ไม่ว่า LONG/SHORT)
+            # = ราคาเบี่ยงสูงสุดจาก entry เท่าไหร่ในทิศทางที่เสียเปรียบ
             if side == "LONG":
-                dist = (position.bep - l) / position.bep * 100  # ลากลงจาก BEP
+                # LONG: low ลากลงไปไกลแค่ไหนจาก EP
+                dist = abs(position.first_entry_price - min(l, position.first_entry_price)) / position.first_entry_price * 100
             else:
-                dist = (h - position.bep) / position.bep * 100  # ลากขึ้นจาก BEP
+                # SHORT: high ลากขึ้นไปไกลแค่ไหนจาก EP
+                dist = abs(max(h, position.first_entry_price) - position.first_entry_price) / position.first_entry_price * 100
             if dist > position.max_distance_pct:
                 position.max_distance_pct = dist
 
@@ -249,6 +355,7 @@ def run_backtest(symbol, cfg=None):
                     fee_usd=round(position.total_fees_usd, 2),
                     holding_minutes=position.holding_time_minutes,
                     max_distance_pct=round(position.max_distance_pct, 4),
+                    entry_score=round(position.entry_score, 2),
                     close_reason="LIQUIDATE",
                 ))
                 portfolio.update_equity(ts)
@@ -273,6 +380,7 @@ def run_backtest(symbol, cfg=None):
                     fee_usd=round(position.total_fees_usd, 2),
                     holding_minutes=position.holding_time_minutes,
                     max_distance_pct=round(position.max_distance_pct, 4),
+                    entry_score=round(position.entry_score, 2),
                     close_reason="TP",
                 ))
                 portfolio.update_equity(ts)
@@ -296,6 +404,7 @@ def run_backtest(symbol, cfg=None):
                     fee_usd=round(position.total_fees_usd, 2),
                     holding_minutes=position.holding_time_minutes,
                     max_distance_pct=round(position.max_distance_pct, 4),
+                    entry_score=round(position.entry_score, 2),
                     close_reason="TP",
                 ))
                 portfolio.update_equity(ts)
@@ -345,6 +454,7 @@ def run_backtest(symbol, cfg=None):
                             fee_usd=round(position.total_fees_usd, 2),
                             holding_minutes=position.holding_time_minutes,
                             max_distance_pct=round(position.max_distance_pct, 4),
+                            entry_score=round(position.entry_score, 2),
                     close_reason="CUTLOSS",
                         ))
                         portfolio.update_equity(ts)
@@ -383,6 +493,7 @@ def run_backtest(symbol, cfg=None):
                 order_price = maker_price(price, "LONG", offset_pct)
                 if l <= order_price:
                     pos = Position(symbol, "LONG", size_per_trade, position_cfg)
+                    pos.entry_score = entry_score_long[i]
                     pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
                     pos.update_liquidation_price(portfolio.capital)
                     position = pos
@@ -407,6 +518,7 @@ def run_backtest(symbol, cfg=None):
                 order_price = maker_price(price, "SHORT", offset_pct)
                 if h >= order_price:
                     pos = Position(symbol, "SHORT", size_per_trade, position_cfg)
+                    pos.entry_score = entry_score_short[i]
                     pos.add_trade(ts, "OPEN", order_price, size_per_trade, fee_rate)
                     pos.update_liquidation_price(portfolio.capital)
                     position = pos
@@ -455,6 +567,7 @@ def run_backtest(symbol, cfg=None):
             fee_usd=round(position.total_fees_usd, 2),
             holding_minutes=position.holding_time_minutes,
             max_distance_pct=round(position.max_distance_pct, 4),
+            entry_score=round(position.entry_score, 2),
                     close_reason="END",
         ))
         portfolio.update_equity(last_ts)
