@@ -5,7 +5,7 @@ strategy:
   timeframe: "1m"
   initial_capital: 2000.0          # พอร์ต $2K
   leverage: 10
-  size_per_trade_usd: 15.0        # ไม้ละ $15
+  size_per_trade_usd: 8.0         # ไม้ละ $8
   max_positions: 1
 
 signal:
@@ -58,7 +58,7 @@ order:
   take_profit_above_bep_percent: 1.0
 
 position:
-  dca_trigger_below_bep_percent: 0.3
+  dca_trigger_below_bep_percent: 0.1
   dca_multiplier: 1.0
   dca_max_cap_usd: 85000.0
   long_timeout_minutes: 9999999

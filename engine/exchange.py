@@ -43,7 +43,7 @@ EXCHANGE_RULES: Dict[str, ExchangeSymbolInfo] = {
         price_precision=5,      # ราคา 0.00001
         qty_precision=0,        # จำนวนเต็ม DOGE (833, 834)
         min_qty=1.0,
-        min_notional=15.0
+        min_notional=8.0
     ),
     "SOLUSDT": ExchangeSymbolInfo(
         symbol="SOLUSDT",
